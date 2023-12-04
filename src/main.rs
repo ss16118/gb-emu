@@ -62,18 +62,23 @@ fn main() {
         let config: Config = Config::builder()
             .appender(Appender::builder().build("stdout", Box::new(stdout)))
             .appender(Appender::builder().build("log_file", Box::new(log_file_appender)))
+            .logger(log4rs::config::Logger::builder()
+                    .appender("stdout")
+                    .build("stdout", LevelFilter::Info))
             .build(Root::builder()
                     .appender("log_file")
-                    .appender("stdout")
                     .build(LevelFilter::Info))
             .unwrap();
 
         log4rs::init_config(config).unwrap();
         log::info!("Logging enabled [Log file: {}]", log_file);
-        log::info!("Logger initialized");
+        log::info!(target: "stdout", "Logger initialized");
         log::info!("Rom file: {}", rom_file);
 
         // Initialize the emulator
         let mut emulator = Emulator::new(&rom_file);
+
+        // Starts the emulator
+        emulator.run();
     }
 }

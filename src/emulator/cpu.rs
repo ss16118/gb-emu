@@ -8,4 +8,10 @@ impl CPU {
 
         }
     }
+
+    pub fn step(&mut self) -> () {
+        // Fetch
+        // Decode
+        // Execute
+    }
 }

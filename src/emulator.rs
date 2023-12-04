@@ -2,7 +2,7 @@ use log::{error, info, warn};
 
 
 pub mod cartridge;
-use cartridge::Cartridge;
+use cartridge::*;
 pub mod cpu;
 use cpu::CPU;
 pub mod address_bus;
@@ -35,11 +35,16 @@ impl Emulator {
     */
     pub fn new(rom_file: &str) -> Emulator {
         log::info!("Initializing emulator...");
-        let cartridge = Cartridge::new(rom_file);
+        let mut cartridge = Cartridge::new();
         let cpu = CPU::new();
         let address_bus = AddressBus::new();
         let ppu = PPU::new();
         let timer = Timer::new();
+        
+        // Loads the ROM file into the cartridge
+        cartridge.load_rom_file(rom_file);
+
+        log::info!(target: "stdout", "Initialize emulator: SUCCESS");
 
         Emulator {
             cartridge: Box::new(cartridge),
@@ -48,5 +53,9 @@ impl Emulator {
             ppu: Box::new(ppu),
             timer: Box::new(timer),
         }
+    }
+
+    pub fn run(&mut self) -> () {
+        log::info!("Emulator is running");
     }
 }

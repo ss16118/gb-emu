@@ -13,9 +13,9 @@ pub mod timer;
 use timer::Timer;
 
 
-    /**
-    * Emulator context
-    */
+/**
+* Emulator context
+*/
 pub struct Emulator {
     cartridge: Box<Cartridge>,
     cpu: Box<CPU>,
@@ -45,7 +45,7 @@ impl Emulator {
         cartridge.load_rom_file(rom_file);
 
         log::info!(target: "stdout", "Initialize emulator: SUCCESS");
-
+        cartridge.print_info(true);
         Emulator {
             cartridge: Box::new(cartridge),
             cpu: Box::new(cpu),

@@ -77,7 +77,7 @@ fn main() {
 
         // Initialize the emulator
         let mut emulator = Emulator::new(&rom_file);
-
+        
         // Starts the emulator
         emulator.run();
     }

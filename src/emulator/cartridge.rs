@@ -202,6 +202,21 @@ impl Cartridge {
     }
 
     /**
+     * Reads a byte from the ROM
+     */
+    pub fn read(&self, address: u16) -> u8 {
+        return self.rom[address as usize];
+    }
+
+    /**
+     * Writes a byte to the ROM. Returns true if the write was successful,
+     * false otherwise.
+     */
+    pub fn write(&mut self, address: u16, data: u8) -> () {
+        self.rom[address as usize] = data;
+    }
+
+    /**
      * Prints the cartridge information to the log file and/or stdout.
      * @param to_stdout: Whether to print to stdout or not.
      * @return (): Nothing

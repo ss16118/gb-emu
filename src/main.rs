@@ -11,8 +11,6 @@ use emulator::Emulator;
 
 // Disable warnings for unused imports
 #[allow(unused_variables, unused_mut, unused_imports)]
-
-
 fn main() {
     /********************
     * Argument parsing
@@ -40,11 +38,19 @@ fn main() {
                  .default_value("false")
                  .num_args(0)
                  .help("Enable logging"))
+        .arg(Arg::new("enable_tracing")
+                  .short('t')
+                  .long("trace")
+                  .required(false)
+                  .default_value("false")
+                  .num_args(0)
+                  .help("Enable instruction tracing. Logs executed instructions to trace.log"))
         .get_matches();
 
     let rom_file = matches.get_one::<String>("rom_file").unwrap();
     let log_file = matches.get_one::<String>("log_file").unwrap();
     let disable_logging = matches.get_one::<bool>("disable_logging").unwrap();
+    let enable_tracing = matches.get_one::<bool>("enable_tracing").unwrap();
 
     // Initialize the logger with the given log file
     // Implementation from:
@@ -74,11 +80,14 @@ fn main() {
         log::info!("Logging enabled [Log file: {}]", log_file);
         log::info!(target: "stdout", "Logger initialized");
         log::info!("Rom file: {}", rom_file);
-
-        // Initialize the emulator
-        let mut emulator = Emulator::new(&rom_file);
-        
-        // Starts the emulator
-        emulator.run();
+        if *enable_tracing {
+            log::info!("Tracing enabled [Trace file: trace.log]");
+        }
     }
+
+    // Initialize the emulator
+    let mut emulator = Emulator::new(&rom_file, *enable_tracing);
+        
+    // Starts the emulator
+    emulator.run();
 }

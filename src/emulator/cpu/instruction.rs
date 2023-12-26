@@ -1,7 +1,7 @@
 use phf::{phf_map, Map};
 
 /* Addressing mode */
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum AddrMode {
     AM_IMP,
     AM_R_D16,
@@ -28,7 +28,7 @@ pub enum AddrMode {
 
 
 /* Register type */
-#[derive(strum_macros::Display, Debug, PartialEq, Eq)]
+#[derive(strum_macros::Display, Debug, PartialEq, Eq, PartialOrd)]
 pub enum RegType {
     RT_NONE,
     RT_A,
@@ -48,6 +48,12 @@ pub enum RegType {
 }
 
 impl RegType {
+    /**
+     * Returns true if the register type is 16-bit.
+     */
+    pub fn is_16_bit(&self) -> bool {
+        return self >= &RegType::RT_AF;
+    }
     /**
      * Returns a string representation of the register type.
      */
@@ -226,17 +232,32 @@ impl Instruction {
     }
 }
 
-
+/**************************************************
+ * https://meganesu.github.io/generate-gb-opcodes/
+ *************************************************/
 /* A map that maps each opcode to an instruction struct */
 pub static INSTRUCTIONS: Map<u8, Instruction> = phf_map! {
     // 0x00 - 0x0F
     0x00_u8 => Instruction::default(InstrType::IN_NOP, AddrMode::AM_IMP),
+    0x01_u8 => Instruction::with_one_reg(InstrType::IN_LD, AddrMode::AM_R_D16, RegType::RT_BC),
+    0x02_u8 => Instruction::with_two_regs(InstrType::IN_LD, AddrMode::AM_MR_R,
+        RegType::RT_BC, RegType::RT_A),
+    0x03_u8 => Instruction::with_one_reg(InstrType::IN_INC, AddrMode::AM_R, RegType::RT_BC),
+    0x05_u8 => Instruction::with_one_reg(InstrType::IN_DEC, AddrMode::AM_R, RegType::RT_B),
+    0x06_u8 => Instruction::with_one_reg(InstrType::IN_LD, AddrMode::AM_R_D8, RegType::RT_B),
+    0x08_u8 => Instruction::with_two_regs(InstrType::IN_LD, AddrMode::AM_A16_R,
+        RegType::RT_NONE, RegType::RT_HL),
+    0x0A_u8 => Instruction::with_two_regs(InstrType::IN_LD, AddrMode::AM_R_MR,
+        RegType::RT_A, RegType::RT_BC),
     0x0E_u8 => Instruction::with_one_reg(InstrType::IN_LD, AddrMode::AM_R_D8, RegType::RT_C),
 
     // 0x10 - 0x1F
+    0x10_u8 => Instruction::default(InstrType::IN_STOP, AddrMode::AM_D8),
+    0x11_u8 => Instruction::with_one_reg(InstrType::IN_LD, AddrMode::AM_R_D16, RegType::RT_DE),
+
     // 0x20 - 0x2F
     // 0x30 - 0x3F
-    0x31_u8 => Instruction::with_one_reg(InstrType::IN_LD, AddrMode::AM_R_D16, RegType::RT_SP),
+    0x31_u8 => Instruction::with_one_reg(InstrType::IN_LD, AddrMode::AM_R_D16, RegType::RT_DE),
 
     // 0x40 - 0x4F
     0x40_u8 => Instruction::new(InstrType::IN_LD, AddrMode::AM_R_R,

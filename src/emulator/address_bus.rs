@@ -68,4 +68,24 @@ impl AddressBus {
         log::error!("Writing to address 0x{:04X} currently not supported", address);
         std::process::exit(-5);
     }
+
+    /**
+     * Read a 16-bit value from the given address
+     */
+    pub fn read_16(&mut self, address: u16) -> u16 {
+        let low = self.read(address);
+        let high = self.read(address + 1);
+        return (high as u16) << 8 | low as u16;
+    }
+    
+    /**
+     * Write a 16-bit value to the given address
+     */
+    pub fn write_16(&mut self, address: u16, data: u16) -> () {
+        let low = data as u8;
+        let high = (data >> 8) as u8;
+        self.write(address, low);
+        self.write(address + 1, high);
+    }
+
 }

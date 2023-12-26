@@ -69,7 +69,7 @@ impl Emulator {
             if self.paused {
                std::thread::sleep(std::time::Duration::from_millis(32));
             }
-            if !(*self.cpu).step(&self.address_bus) {
+            if !(*self.cpu).step(&mut self.address_bus) {
                 log::error!(target: "stdout", "CPU stopped");
                 std::process::exit(-1);
             }

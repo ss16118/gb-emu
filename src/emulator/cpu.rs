@@ -89,8 +89,50 @@ impl CPU {
     /**
      * Executes the LD instruction
      */
-    fn exec_ld(&mut self) -> () {
+    fn exec_ld(&mut self, bus: &mut AddressBus) -> () {
 
+        if self.dest_is_mem {
+            // E.g., LD (HL), A
+            // If the destination is memory, write the fetched data
+            // to the memory location specified by mem_dest
+            if unsafe { (*self.instr).reg2.is_16_bit()  } {
+                // Writes 16-bit value to memory
+                bus.write_16(self.mem_dest, self.fetched_data);
+            } else {
+                // Writes 8-bit value to memory
+                bus.write(self.mem_dest, self.fetched_data as u8);
+            }
+            self.tick(1);
+            return;
+        }
+
+        if unsafe { (*self.instr).addr_mode == AddrMode::AM_HL_SPR } {
+            // Special case: LD HL, SP + r8
+            unsafe {
+                assert! ((*self.instr).reg1 == RegType::RT_HL && 
+                         (*self.instr).reg2 == RegType::RT_SP);
+            }
+            // Half Carry Flag (H) is set if there is a carry from bit 3
+            // to bit 4
+            let h_flag = ((self.read_reg(&RegType::RT_SP) & 0x0F) +
+                (self.fetched_data & 0x0F)) > 0x10;
+            // Carry Flag (C) is set if there is a carry from bit 7
+            // to bit 8
+            let c_flag = ((self.read_reg(&RegType::RT_SP) & 0xFF) +
+                (self.fetched_data & 0xFF)) > 0x100;
+            
+            self.set_flags(false, false, h_flag, c_flag);
+            let res: u16 = 
+                self.read_reg(&RegType::RT_SP).checked_add_signed(self.fetched_data as i16).unwrap();
+            
+            self.set_register(&RegType::RT_HL, res);
+        }
+
+        // The most common case: setting the value of a register
+        // to the fetched data
+        unsafe {
+            self.set_register(&(*self.instr).reg1, self.fetched_data);
+        }
     }
 
     /**
@@ -119,6 +161,17 @@ impl CPU {
             self.set_register(&(*self.instr).reg1, result);
             self.set_flags(result == 0, false, false, false);
         }
+    }
+
+    /**
+     * Executes the INC instruction
+     */
+    fn exec_inc(&mut self) -> () {
+        let val = self.fetched_data.checked_add(1).unwrap();
+        if unsafe { (*self.instr).reg1.is_16_bit() } {
+            self.tick(1);
+        }
+    }
     }
 
     /*****************************************
@@ -299,7 +352,7 @@ impl CPU {
      * @param bus: The address bus
      * @return (): Nothing
      *********************************************************/
-    fn fetch_data(&mut self, bus: &AddressBus) -> () {
+    fn fetch_data(&mut self, bus: &mut AddressBus) -> () {
         self.mem_dest = 0;
         self.dest_is_mem = false;
         unsafe {
@@ -514,7 +567,7 @@ impl CPU {
     /**
      * Executes the current instruction
      */
-    fn execute(&mut self) -> () {
+    fn execute(&mut self, bus: &mut AddressBus) -> () {
         unsafe {
             // FIXME There is no better way to do it in Rust?
             match (*self.instr).instr_type {
@@ -522,8 +575,11 @@ impl CPU {
                     self.exec_none();
                 },
                 InstrType::IN_LD => {
-                    self.exec_ld();
+                    self.exec_ld(bus);
                 },
+                InstrType::IN_INC => {
+
+                }
                 InstrType::IN_JP => {
                     self.exec_jp();
                 },
@@ -543,7 +599,7 @@ impl CPU {
         }
     }
     
-    pub fn step(&mut self, bus: &AddressBus) -> bool {
+    pub fn step(&mut self, bus: &mut AddressBus) -> bool {
         if !self.halted {
             let pc = self.read_reg(&RegType::RT_PC);
             // Fetch and Decode
@@ -560,7 +616,7 @@ impl CPU {
             // Execute            
             self.fetch_data(bus);
 
-            self.execute();
+            self.execute(bus);
         }
         return true;
     }

@@ -64,13 +64,24 @@ fn main() {
                 "{d(%Y-%m-%d %H:%M:%S)} | {({l}):5.5} | {m}{n}")))
             .build(log_file)
             .unwrap();
+
+        // Trace file is 
+        let trace_file_appender = FileAppender::builder()
+            .append(false)
+            .encoder(Box::new(PatternEncoder::new("{m}{n}")))
+            .build("trace.log")
+            .unwrap();
         
         let config: Config = Config::builder()
             .appender(Appender::builder().build("stdout", Box::new(stdout)))
             .appender(Appender::builder().build("log_file", Box::new(log_file_appender)))
+            .appender(Appender::builder().build("trace_file", Box::new(trace_file_appender)))
             .logger(log4rs::config::Logger::builder()
                     .appender("stdout")
                     .build("stdout", LevelFilter::Info))
+            .logger(log4rs::config::Logger::builder()
+                    .appender("trace_file")
+                    .build("trace_file", LevelFilter::Trace))
             .build(Root::builder()
                     .appender("log_file")
                     .build(LevelFilter::Info))
@@ -82,9 +93,9 @@ fn main() {
         log::info!("Rom file: {}", rom_file);
         if *enable_tracing {
             log::info!("Tracing enabled [Trace file: trace.log]");
+            log::warn!("This will slow down the emulator and produce a large log file.");
         }
     }
-
     // Initialize the emulator
     let mut emulator = Emulator::new(&rom_file, *enable_tracing);
         

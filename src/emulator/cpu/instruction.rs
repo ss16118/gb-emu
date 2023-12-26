@@ -28,7 +28,7 @@ pub enum AddrMode {
 
 
 /* Register type */
-#[derive(Debug)]
+#[derive(strum_macros::Display, Debug, PartialEq, Eq)]
 pub enum RegType {
     RT_NONE,
     RT_A,
@@ -47,10 +47,19 @@ pub enum RegType {
     RT_PC
 }
 
+impl RegType {
+    /**
+     * Returns a string representation of the register type.
+     */
+    fn str(&self) -> String {
+        return self.to_string()[3..].to_string();
+    }
+}
+
 /**
  * An enum that defines the type of conditions
  */
-enum CondType {
+pub enum CondType {
     CT_NONE,
     CT_NZ,
     CT_Z,
@@ -59,8 +68,8 @@ enum CondType {
 }
 
 /* Instruction type */
-#[derive(strum_macros::Display)]
-enum InstrType {
+#[derive(strum_macros::Display, Eq, PartialEq, Hash, Debug)]
+pub enum InstrType {
     IN_NONE,
     IN_NOP,
     IN_LD,
@@ -113,6 +122,9 @@ enum InstrType {
 }
 
 impl InstrType {
+    /**
+     * Returns a string representation of the instruction type.
+     */
     fn str(&self) -> String {
         return self.to_string()[3..].to_string();
     }
@@ -161,6 +173,18 @@ impl Instruction {
     
     }
 
+    const fn with_two_regs(instr_type: InstrType, addr_mode: AddrMode,
+            reg1: RegType, reg2: RegType) -> Instruction {
+        return Instruction {
+            param: 0,
+            instr_type: instr_type,
+            addr_mode: addr_mode,
+            reg1: reg1,
+            reg2: reg2,
+            cond_type: CondType::CT_NONE
+        };
+    }
+
     const fn new(instr_type: InstrType, addr_mode: AddrMode, reg1: RegType,
             reg2: RegType, cond_type: CondType, param: u8) -> Instruction {
         return Instruction {
@@ -180,6 +204,15 @@ impl Instruction {
     pub fn str(&self) -> String {
         let mut result = String::new();
         result.push_str(&self.instr_type.str());
+        if self.reg1 != RegType::RT_NONE {
+            result.push_str(&format!(" {}", self.reg1.str()));
+        }
+        if self.reg2 != RegType::RT_NONE {
+            result.push_str(&format!(", {}", self.reg2.str()));
+        }
+        if self.param != 0 {
+            result.push_str(&format!(" {:#04X}", self.param));
+        }
         return result;
     }
 
@@ -196,14 +229,34 @@ impl Instruction {
 
 /* A map that maps each opcode to an instruction struct */
 pub static INSTRUCTIONS: Map<u8, Instruction> = phf_map! {
+    // 0x00 - 0x0F
     0x00_u8 => Instruction::default(InstrType::IN_NOP, AddrMode::AM_IMP),
     0x0E_u8 => Instruction::with_one_reg(InstrType::IN_LD, AddrMode::AM_R_D8, RegType::RT_C),
+
+    // 0x10 - 0x1F
+    // 0x20 - 0x2F
+    // 0x30 - 0x3F
+    0x31_u8 => Instruction::with_one_reg(InstrType::IN_LD, AddrMode::AM_R_D16, RegType::RT_SP),
+
+    // 0x40 - 0x4F
     0x40_u8 => Instruction::new(InstrType::IN_LD, AddrMode::AM_R_R,
         RegType::RT_B, RegType::RT_B, CondType::CT_NONE, 0),
     0x41_u8 => Instruction::new(InstrType::IN_LD, AddrMode::AM_R_R,
         RegType::RT_B, RegType::RT_C, CondType::CT_NONE, 0),
-    0xAF_u8 => Instruction::with_one_reg(InstrType::IN_XOR, AddrMode::AM_R, RegType::RT_A),
+    
+    // 0xA0 - 0xAF
+    0xAF_u8 => Instruction::with_two_regs(InstrType::IN_XOR, AddrMode::AM_R_R,
+        RegType::RT_A, RegType::RT_A),
+
+    // 0xC0 - 0xCF
     0xC3_u8 => Instruction::default(InstrType::IN_JP, AddrMode::AM_D16),
+
+    // 0xD0 - 0xDF
+    // 0xE0 - 0xEF
+
+    // 0xF0 - 0xFF
+    0xF3_u8 => Instruction::default(InstrType::IN_DI, AddrMode::AM_IMP),
+    0xFE_u8 => Instruction::with_one_reg(InstrType::IN_CP, AddrMode::AM_R_D8, RegType::RT_A),
 };
 
 

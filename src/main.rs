@@ -39,18 +39,26 @@ fn main() {
                  .num_args(0)
                  .help("Enable logging"))
         .arg(Arg::new("enable_tracing")
-                  .short('t')
-                  .long("trace")
-                  .required(false)
-                  .default_value("false")
-                  .num_args(0)
-                  .help("Enable instruction tracing. Logs executed instructions to trace.log"))
+                 .short('t')
+                 .long("trace")
+                 .required(false)
+                 .default_value("false")
+                 .num_args(0)
+                 .help("Enable instruction tracing. Logs executed instructions to trace.log"))
+        .arg(Arg::new("debug")
+                 .short('d')
+                 .long("debug")
+                 .required(false)
+                 .default_value("false")
+                 .num_args(0)
+                 .help("Enable debug mode. Logs CPU state after each instruction."))
         .get_matches();
 
     let rom_file = matches.get_one::<String>("rom_file").unwrap();
     let log_file = matches.get_one::<String>("log_file").unwrap();
     let disable_logging = matches.get_one::<bool>("disable_logging").unwrap();
     let enable_tracing = matches.get_one::<bool>("enable_tracing").unwrap();
+    let debug = matches.get_one::<bool>("debug").unwrap();
 
     // Initialize the logger with the given log file
     // Implementation from:
@@ -100,5 +108,5 @@ fn main() {
     let mut emulator = Emulator::new(&rom_file, *enable_tracing);
         
     // Starts the emulator
-    emulator.run();
+    emulator.run(*debug);
 }

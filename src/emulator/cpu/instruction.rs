@@ -2,6 +2,7 @@ use phf::{phf_map, Map};
 
 /* Addressing mode */
 #[derive(Debug, PartialEq, Eq)]
+#[allow(dead_code, non_camel_case_types)]
 pub enum AddrMode {
     AM_IMP,
     AM_R_D16,
@@ -29,6 +30,7 @@ pub enum AddrMode {
 
 /* Register type */
 #[derive(strum_macros::Display, Debug, PartialEq, Eq, PartialOrd)]
+#[allow(dead_code, non_camel_case_types)]
 pub enum RegType {
     RT_NONE,
     RT_A,
@@ -65,6 +67,8 @@ impl RegType {
 /**
  * An enum that defines the type of conditions
  */
+#[derive(Debug, PartialEq, Eq)]
+#[allow(dead_code, non_camel_case_types)]
 pub enum CondType {
     CT_NONE,
     CT_NZ,
@@ -75,6 +79,7 @@ pub enum CondType {
 
 /* Instruction type */
 #[derive(strum_macros::Display, Eq, PartialEq, Hash, Debug)]
+#[allow(non_camel_case_types)]
 pub enum InstrType {
     IN_NONE,
     IN_NOP,
@@ -256,24 +261,30 @@ pub static INSTRUCTIONS: Map<u8, Instruction> = phf_map! {
     0x11_u8 => Instruction::with_one_reg(InstrType::IN_LD, AddrMode::AM_R_D16, RegType::RT_DE),
     0x15_u8 => Instruction::with_one_reg(InstrType::IN_DEC, AddrMode::AM_R, RegType::RT_D),
     0x16_u8 => Instruction::with_one_reg(InstrType::IN_LD, AddrMode::AM_R_D8, RegType::RT_D),
+    0x18_u8 => Instruction::default(InstrType::IN_JR, AddrMode::AM_D8),
     0x1A_u8 => Instruction::with_two_regs(InstrType::IN_LD, AddrMode::AM_R_MR,
         RegType::RT_A, RegType::RT_DE),
     0x1E_u8 => Instruction::with_one_reg(InstrType::IN_LD, AddrMode::AM_R_D8, RegType::RT_E),
 
     // 0x20 - 0x2F
+    0x20_u8 => Instruction::new(InstrType::IN_JR, AddrMode::AM_D8,
+        RegType::RT_NONE, RegType::RT_NONE, CondType::CT_NZ, 0),
     0x21_u8 => Instruction::with_one_reg(InstrType::IN_LD, AddrMode::AM_R_D16, RegType::RT_HL),
     0x22_u8 => Instruction::with_two_regs(InstrType::IN_LD, AddrMode::AM_HLI_R,
         RegType::RT_HL, RegType::RT_A),
     0x23_u8 => Instruction::with_one_reg(InstrType::IN_INC, AddrMode::AM_R, RegType::RT_HL),
     0x25_u8 => Instruction::with_one_reg(InstrType::IN_DEC, AddrMode::AM_R, RegType::RT_H),
     0x26_u8 => Instruction::with_one_reg(InstrType::IN_LD, AddrMode::AM_R_D8, RegType::RT_H),
+    0x28_u8 => Instruction::new(InstrType::IN_JR, AddrMode::AM_D8,
+        RegType::RT_NONE, RegType::RT_NONE, CondType::CT_Z, 0),
     0x2A_u8 => Instruction::with_two_regs(InstrType::IN_LD, AddrMode::AM_R_HLI,
         RegType::RT_A, RegType::RT_HL),
     0x2E_u8 => Instruction::with_one_reg(InstrType::IN_LD, AddrMode::AM_R_D8, RegType::RT_L),
 
     // 0x30 - 0x3F
-    0x30_u8 => Instruction::default(InstrType::IN_JR, AddrMode::AM_D8),
-    0x31_u8 => Instruction::with_one_reg(InstrType::IN_LD, AddrMode::AM_R_D16, RegType::RT_DE),
+    0x30_u8 => Instruction::new(InstrType::IN_JR, AddrMode::AM_D8,
+        RegType::RT_NONE, RegType::RT_NONE, CondType::CT_NC, 0),
+    0x31_u8 => Instruction::with_one_reg(InstrType::IN_LD, AddrMode::AM_R_D16, RegType::RT_SP),
     0x32_u8 => Instruction::with_two_regs(InstrType::IN_LD, AddrMode::AM_HLD_R,
         RegType::RT_HL, RegType::RT_A),
     0x33_u8 => Instruction::with_one_reg(InstrType::IN_INC, AddrMode::AM_R, RegType::RT_SP),
@@ -281,6 +292,8 @@ pub static INSTRUCTIONS: Map<u8, Instruction> = phf_map! {
     0x36_u8 => Instruction::with_one_reg(InstrType::IN_LD, AddrMode::AM_R_D8, RegType::RT_HL),
     0x3A_u8 => Instruction::with_two_regs(InstrType::IN_LD, AddrMode::AM_R_HLD,
         RegType::RT_A, RegType::RT_HL),
+    0x38_u8 => Instruction::new(InstrType::IN_JR, AddrMode::AM_D8,
+        RegType::RT_NONE, RegType::RT_NONE, CondType::CT_C, 0),
     0x3E_u8 => Instruction::with_one_reg(InstrType::IN_LD, AddrMode::AM_R_D8, RegType::RT_A),
 
     // 0x40 - 0x4F
@@ -423,24 +436,79 @@ pub static INSTRUCTIONS: Map<u8, Instruction> = phf_map! {
         RegType::RT_A, RegType::RT_A),
 
     // 0xC0 - 0xCF
+    0xC0_u8 => Instruction::new(InstrType::IN_RET, AddrMode::AM_IMP,
+        RegType::RT_NONE, RegType::RT_NONE, CondType::CT_NZ, 0),
+    0xC1_u8 => Instruction::with_one_reg(InstrType::IN_POP, AddrMode::AM_R, RegType::RT_BC),
+    0xC2_u8 => Instruction::new(InstrType::IN_JP, AddrMode::AM_D16,
+        RegType::RT_NONE, RegType::RT_NONE, CondType::CT_NZ, 0),
     0xC3_u8 => Instruction::default(InstrType::IN_JP, AddrMode::AM_D16),
+    0xC4_u8 => Instruction::new(InstrType::IN_CALL, AddrMode::AM_D16_R,
+        RegType::RT_NONE, RegType::RT_NONE, CondType::CT_NZ, 0),
+    0xC5_u8 => Instruction::with_one_reg(InstrType::IN_PUSH, AddrMode::AM_R, RegType::RT_BC),
+    0xC7_u8 => Instruction::new(InstrType::IN_RST, AddrMode::AM_IMP,
+        RegType::RT_NONE, RegType::RT_NONE, CondType::CT_NONE, 0x00),
+    0xC8_u8 => Instruction::new(InstrType::IN_RET, AddrMode::AM_IMP,
+        RegType::RT_NONE, RegType::RT_NONE, CondType::CT_Z, 0),
+    0xC9_u8 => Instruction::default(InstrType::IN_RET, AddrMode::AM_IMP),
+    0xCA_u8 => Instruction::new(InstrType::IN_JP, AddrMode::AM_D16,
+        RegType::RT_NONE, RegType::RT_NONE, CondType::CT_Z, 0),
+    0xCC_u8 => Instruction::new(InstrType::IN_CALL, AddrMode::AM_D16_R,
+        RegType::RT_NONE, RegType::RT_NONE, CondType::CT_Z, 0),
+    0xCD_u8 => Instruction::default(InstrType::IN_CALL, AddrMode::AM_D16),
+    0xCF_u8 => Instruction::new(InstrType::IN_RST, AddrMode::AM_IMP,
+        RegType::RT_NONE, RegType::RT_NONE, CondType::CT_NONE, 0x08),
 
     // 0xD0 - 0xDF
+    0xD0_u8 => Instruction::new(InstrType::IN_RET, AddrMode::AM_IMP,
+        RegType::RT_NONE, RegType::RT_NONE, CondType::CT_NC, 0),
+    0xD1_u8 => Instruction::with_one_reg(InstrType::IN_POP, AddrMode::AM_R, RegType::RT_DE),
+    0xD2_u8 => Instruction::new(InstrType::IN_JP, AddrMode::AM_D16,
+        RegType::RT_NONE, RegType::RT_NONE, CondType::CT_NC, 0),
+    0xD4_u8 => Instruction::new(InstrType::IN_CALL, AddrMode::AM_D16_R,
+        RegType::RT_NONE, RegType::RT_NONE, CondType::CT_NC, 0),
+    0xD5_u8 => Instruction::with_one_reg(InstrType::IN_PUSH, AddrMode::AM_R, RegType::RT_DE),
+    0xD7_u8 => Instruction::new(InstrType::IN_RST, AddrMode::AM_IMP,
+        RegType::RT_NONE, RegType::RT_NONE, CondType::CT_NONE, 0x10),
+    0xD8_u8 => Instruction::new(InstrType::IN_RET, AddrMode::AM_IMP,
+        RegType::RT_NONE, RegType::RT_NONE, CondType::CT_C, 0),
+    0xD9_u8 => Instruction::default(InstrType::IN_RETI, AddrMode::AM_IMP),
+    0xDA_u8 => Instruction::new(InstrType::IN_JP, AddrMode::AM_D16,
+        RegType::RT_NONE, RegType::RT_NONE, CondType::CT_C, 0),
+    0xDC_u8 => Instruction::new(InstrType::IN_CALL, AddrMode::AM_D16_R,
+        RegType::RT_NONE, RegType::RT_NONE, CondType::CT_C, 0),
+    0xDF_u8 => Instruction::new(InstrType::IN_RST, AddrMode::AM_IMP,
+        RegType::RT_NONE, RegType::RT_NONE, CondType::CT_NONE, 0x18),
+
     // 0xE0 - 0xEF
+    0xE0_u8 => Instruction::with_two_regs(InstrType::IN_LDH, AddrMode::AM_A8_R,
+        RegType::RT_NONE, RegType::RT_A),
+    0xE1_u8 => Instruction::with_one_reg(InstrType::IN_POP, AddrMode::AM_R, RegType::RT_HL),
     0xE2_u8 => Instruction::with_two_regs(InstrType::IN_LD, AddrMode::AM_MR_R,
         RegType::RT_C, RegType::RT_A),
+    0xE5_u8 => Instruction::with_one_reg(InstrType::IN_PUSH, AddrMode::AM_R, RegType::RT_HL),
+    0xE7_u8 => Instruction::new(InstrType::IN_RST, AddrMode::AM_IMP,
+        RegType::RT_NONE, RegType::RT_NONE, CondType::CT_NONE, 0x20),
+    0xE9_u8 => Instruction::with_one_reg(InstrType::IN_JP, AddrMode::AM_R, RegType::RT_HL),
     0xEA_u8 => Instruction::with_two_regs(InstrType::IN_LD, AddrMode::AM_A16_R,
         RegType::RT_NONE, RegType::RT_A),
+    0xEF_u8 => Instruction::new(InstrType::IN_RST, AddrMode::AM_IMP,
+        RegType::RT_NONE, RegType::RT_NONE, CondType::CT_NONE, 0x28),
 
     // 0xF0 - 0xFF
-    0xF0_u8 => Instruction::with_two_regs(InstrType::IN_LD, AddrMode::AM_R_A8,
+    0xF0_u8 => Instruction::with_two_regs(InstrType::IN_LDH, AddrMode::AM_R_A8,
         RegType::RT_A, RegType::RT_NONE),
+    0xF1_u8 => Instruction::with_one_reg(InstrType::IN_POP, AddrMode::AM_R, RegType::RT_AF),
     0xF2_u8 => Instruction::with_two_regs(InstrType::IN_LD, AddrMode::AM_R_MR,
         RegType::RT_A, RegType::RT_C),
     0xF3_u8 => Instruction::default(InstrType::IN_DI, AddrMode::AM_IMP),
+    0xF5_u8 => Instruction::with_one_reg(InstrType::IN_PUSH, AddrMode::AM_R, RegType::RT_AF),
+    0xF7_u8 => Instruction::new(InstrType::IN_RST, AddrMode::AM_IMP,
+        RegType::RT_NONE, RegType::RT_NONE, CondType::CT_NONE, 0x30),
     0xFA_u8 => Instruction::with_two_regs(InstrType::IN_LD, AddrMode::AM_R_A16,
         RegType::RT_A, RegType::RT_NONE),
     0xFE_u8 => Instruction::with_one_reg(InstrType::IN_CP, AddrMode::AM_R_D8, RegType::RT_A),
+    0xFF_u8 => Instruction::new(InstrType::IN_RST, AddrMode::AM_IMP,
+        RegType::RT_NONE, RegType::RT_NONE, CondType::CT_NONE, 0x38),
 };
 
 

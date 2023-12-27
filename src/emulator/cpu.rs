@@ -1,6 +1,3 @@
-use lazy_static::lazy_static;
-use std::sync::Mutex;
-use std::collections::HashMap;
 pub mod instruction;
 use instruction::*;
 use crate::emulator::address_bus::AddressBus;
@@ -19,7 +16,7 @@ struct Registers {
     /* Program counter */
     pc: u16,
     /* Stack pointer */
-    sp: u16
+    sp: u16,
 }
 
 /**
@@ -43,7 +40,8 @@ pub struct CPU {
     dest_is_mem: bool,
     // Current instruction
     instr: *const Instruction,
-
+    /* Interrupt enable register */
+    ie_register: u8,
     registers: Registers,
 }
 
@@ -66,12 +64,13 @@ impl CPU {
             dest_is_mem: false,
             // Initialize the current instruction to null
             instr: std::ptr::null::<Instruction>(),
+            ie_register: 0,
             // Initializes PC to the entry point
             registers: Registers {
                 a: 0, f: 0, b: 0, c: 0,
                 d: 0, e: 0, h: 0, l: 0,
                 pc: 0x100, sp: 0
-            },
+            },            
         };
         log::info!(target: "stdout", "Initializing CPU: SUCCESS");
         return cpu;
@@ -126,6 +125,7 @@ impl CPU {
                 self.read_reg(&RegType::RT_SP).checked_add_signed(self.fetched_data as i16).unwrap();
             
             self.set_register(&RegType::RT_HL, res);
+            return;
         }
 
         // The most common case: setting the value of a register
@@ -135,16 +135,95 @@ impl CPU {
         }
     }
 
+
     /**
-     * Executes the JP instruction
+     * Executes the LDH instruction, i.e., Load into HRAM
      */
-    fn exec_jp(&mut self) -> () {
+    fn exec_ldh(&mut self, bus: &mut AddressBus) -> () {
+        if unsafe { (*self.instr).reg1 == RegType::RT_A } {
+            // LDH A, (a8)
+            let addr = bus.read(self.fetched_data | 0xFF00) as u16;
+            self.set_register(&RegType::RT_A, addr);
+        } else {
+            // LDH (a8), A
+            bus.write(self.mem_dest, self.read_reg(&RegType::RT_A) as u8);
+        }
+        self.tick(1);
+    }
+
+    /**
+     * A helper function that executes instructions that
+     * perform some type of jump operation. If `push_pc`
+     * is true, the current PC value is pushed onto the stack.
+     */
+    fn goto_addr(&mut self, bus: &mut AddressBus,
+            address: u16, push_pc: bool) -> () {
+
         if self.check_cond() {
-            self.registers.pc = self.fetched_data;
+            if push_pc {
+                self.stack_push16(bus, self.read_reg(&RegType::RT_PC));
+                self.tick(2);
+            }
+            self.set_register(&RegType::RT_PC, address);
+            self.tick(1);
+        }
+    }
+
+    /**
+     * Executes the JP instruction. A wrapper function for goto_addr
+     */
+    fn exec_jp(&mut self, bus: &mut AddressBus) -> () {
+        self.goto_addr(bus, self.fetched_data, false);
+    }
+    
+    /**
+     * Executes the JP instruction. A wrapper function for goto_addr
+     */
+    fn exec_jr(&mut self, bus: &mut AddressBus) -> () {
+        let rel: i16 = (self.fetched_data & 0xFF) as i16;
+        let pc = self.read_reg(&RegType::RT_PC);
+        let addr = pc.checked_add_signed(rel).unwrap();
+        self.goto_addr(bus, addr, false);
+    }
+
+    /**
+     * Executes the CALL instruction. A wrapper function for goto_addr
+     */
+    fn exec_call(&mut self, bus: &mut AddressBus) -> () {
+        self.goto_addr(bus, self.fetched_data, true);
+    }
+
+    /**
+     * Executes the RET instruction.
+     */
+    fn exec_ret(&mut self, bus: &mut AddressBus) -> () {
+        if unsafe { (*self.instr).cond_type != CondType::CT_NONE } {
+            self.tick(1);
+        }
+        if self.check_cond() {
+            let addr = self.stack_pop16(bus);
+            self.tick(2);
+            self.set_register(&RegType::RT_PC, addr);
             self.tick(1);
         }
     }
     
+    /**
+     * Executes the RETI instruction. A wrapper for exec_ret
+     */
+    fn exec_reti(&mut self, bus: &mut AddressBus) -> () {
+        // Re-enables interrupts
+        self.interrupt_master_enable = true;
+        self.exec_ret(bus);
+    }
+
+    /**
+     * Executes the RST instruction. A wrapper for goto_addr
+     */
+    fn exec_rst(&mut self, bus: &mut AddressBus) -> () {
+        unsafe { self.goto_addr(bus, (*self.instr).param as u16, true); }
+    }
+
     /**
      * Executes the DI instruction. Disables interrupts.
      */
@@ -174,8 +253,93 @@ impl CPU {
         }
     }
 
+    /**
+     * Executes the POP instruction
+     */
+    fn exec_pop(&mut self, bus: &mut AddressBus) -> () {
+        let value = self.stack_pop16(bus);
+        self.tick(2);
+
+        unsafe {
+            assert! ((*self.instr).reg1.is_16_bit());
+            if (*self.instr).reg1 == RegType::RT_AF {
+                // Special case: AF register
+                // The lower 4 bits of F are always 0
+                self.set_register(&RegType::RT_AF, value & 0xFFF0);
+            } else {
+                self.set_register(&(*self.instr).reg1, value);
+            }
+        }
+    }
+
+    /**
+     * Executes the PUSH instruction
+     */
+    fn exec_push(&mut self, bus: &mut AddressBus) -> () {
+        let hi = ((self.fetched_data & 0xFF00) >> 8) as u8;
+        let lo = (self.fetched_data & 0x00FF) as u8;
+
+        self.stack_push(bus, hi);
+        self.tick(1);
+        self.stack_push(bus, lo);
+        self.tick(1);
+
+        self.tick(1);
+    }
+
+
     /*****************************************
      * End of functions that process instructions
+     *****************************************/
+
+
+    /*****************************************
+     * Stack operations
+     *****************************************/
+
+    /**
+     * A private function that first decrements the stack
+     * pointer then  pushes an 8-bit value onto the memory
+     * address specified by the stack pointer.
+     */
+    fn stack_push(&mut self, bus: &mut AddressBus, data: u8) -> () {
+        let mut sp_val = self.read_reg(&RegType::RT_SP);
+        self.set_register(&RegType::RT_SP, sp_val - 1);
+        sp_val = self.read_reg(&RegType::RT_SP);
+        bus.write(sp_val, data);
+    }
+
+    /**
+     * Pushes a 16-bit value onto the stack
+     */
+    fn stack_push16(&mut self, bus: &mut AddressBus, data: u16) -> () {
+        self.stack_push(bus, ((data & 0xFF00) >> 8) as u8);
+        self.stack_push(bus, (data & 0x00FF) as u8);
+    }
+
+    /**
+     * A private function that first pops an 8-bit value from
+     * the memory address specified by the stack pointer then
+     * increments the stack pointer.
+     */
+    fn stack_pop(&mut self, bus: &mut AddressBus) -> u8 {
+        let sp_val = self.read_reg(&RegType::RT_SP);
+        let data = bus.read(sp_val);
+        self.set_register(&RegType::RT_SP, sp_val + 1);
+        return data;
+    }
+
+    /**
+     * Pops a 16-bit value from the stack and returns it.
+     */
+    fn stack_pop16(&mut self, bus: &mut AddressBus) -> u16 {
+        let lo = self.stack_pop(bus) as u16;
+        let hi = self.stack_pop(bus) as u16;
+        return (hi << 8) | lo;
+    }
+
+    /*****************************************
+     * End of stack operations
      *****************************************/
 
 
@@ -194,7 +358,8 @@ impl CPU {
     }
 
     /**
-     * A private function that reads a byte from the
+     * A private function that reads a byte from the given register
+     * (except for IE)
      */
     #[inline(always)]
     fn read_reg(&self, reg: &RegType) -> u16 {
@@ -239,7 +404,7 @@ impl CPU {
     }
 
     /**
-     * A private function that sets the value of a register
+     * A private function that sets the value of a register (except for IE)
      */
     #[inline(always)]
     fn set_register(&mut self, reg: &RegType, value: u16) -> () {
@@ -274,6 +439,25 @@ impl CPU {
                 std::process::exit(-1);
             }
         };
+    }
+
+
+    /**
+     * A private function that retrieves the value of the interrupt
+     * enable register
+     */
+    #[inline(always)]
+    pub fn get_ie_register(&self) -> u8 {
+        return self.ie_register;
+    }
+
+    /**
+     * A private function that sets the value of the interrupt
+     * enable register
+     */
+    #[inline(always)]
+    pub fn set_ie_register(&mut self, value: u8) -> () {
+        self.ie_register = value;
     }
 
     /**
@@ -333,7 +517,7 @@ impl CPU {
                 // C flag is set
                 return c_flag;
             }
-        }
+        }   
     }
 
     /**
@@ -571,24 +755,20 @@ impl CPU {
         unsafe {
             // FIXME There is no better way to do it in Rust?
             match (*self.instr).instr_type {
-                InstrType::IN_NOP => {
-                    self.exec_none();
-                },
-                InstrType::IN_LD => {
-                    self.exec_ld(bus);
-                },
-                InstrType::IN_INC => {
-
-                }
-                InstrType::IN_JP => {
-                    self.exec_jp();
-                },
-                InstrType::IN_DI => {
-                    self.exec_di();
-                },
-                InstrType::IN_XOR => {
-                    self.exec_xor();
-                },
+                InstrType::IN_NOP   => { self.exec_none(); },
+                InstrType::IN_LD    => { self.exec_ld(bus); },
+                InstrType::IN_INC   => { },
+                InstrType::IN_JP    => { self.exec_jp(bus); },
+                InstrType::IN_JR    => { self.exec_jr(bus); },
+                InstrType::IN_CALL  => { self.exec_call(bus); },
+                InstrType::IN_RET   => { self.exec_ret(bus); },
+                InstrType::IN_RETI  => { self.exec_reti(bus); },
+                InstrType::IN_RST   => { self.exec_rst(bus); },
+                InstrType::IN_DI    => { self.exec_di(); },
+                InstrType::IN_XOR   => { self.exec_xor(); },
+                InstrType::IN_LDH   => { self.exec_ldh(bus); },
+                InstrType::IN_PUSH  => { self.exec_push(bus); },
+                InstrType::IN_POP   => { self.exec_pop(bus); },
                 _ => {
                     log::error!(target: "stdout", "Instruction {:?} not implemented",
                         (*self.instr).instr_type);
@@ -599,6 +779,9 @@ impl CPU {
         }
     }
     
+    /*****************************************
+     * Executes a single instruction
+     *****************************************/
     pub fn step(&mut self, bus: &mut AddressBus) -> bool {
         if !self.halted {
             let pc = self.read_reg(&RegType::RT_PC);
@@ -606,14 +789,12 @@ impl CPU {
             self.fetch_instruction(bus);
 
             if self.trace {
-                unsafe {
-                    let instr_str = (*self.instr).str();
-                    log::trace!(target: "trace_file", "0x{:04X}: {:<10} ({:02X} {:02X} {:02X})", 
-                                pc, instr_str, self.opcode, bus.read(pc + 1), bus.read(pc + 2));
-                }
+                let instr_str = unsafe { (*self.instr).str() };
+                log::trace!(target: "trace_file", "0x{:04X}: {:<10} ({:02X} {:02X} {:02X})", 
+                            pc, instr_str, self.opcode, bus.read(pc + 1), bus.read(pc + 2));
             }
 
-            // Execute            
+            // Execute
             self.fetch_data(bus);
 
             self.execute(bus);
@@ -622,11 +803,27 @@ impl CPU {
     }
 
     /**
+     * Dumps the CPU state
+     */
+    pub fn print_state(&self, logger: &str) -> () {
+        let mut state = String::new();
+        state.push_str(&format!("======= CPU state =======\n"));
+        state.push_str(&format!("A: 0x{:02X}\t\t", self.registers.a));
+        state.push_str(&format!("BC: 0x{:02X}{:02X}\n", self.registers.b, self.registers.c));
+        state.push_str(&format!("DE: 0x{:02X}{:02X}\t", self.registers.d, self.registers.e));
+        state.push_str(&format!("HL: 0x{:02X}{:02X}\n", self.registers.h, self.registers.l));
+        state.push_str(&format!("PC: 0x{:04X}\t", self.registers.pc));
+        state.push_str(&format!("SP: 0x{:04X}", self.registers.sp));
+        log::debug!(target: logger, "{}", state);
+        self.print_flags(logger);
+    }
+
+    /**
      * Prints all the flags in register f.
      */
-    pub fn print_flags(self) -> () {
-        log::info!(target: "stdout", "Z: {}, N: {}, H: {}, C: {}",
-            self.get_flag(0x80), self.get_flag(0x40),
-            self.get_flag(0x20), self.get_flag(0x10));
+    pub fn print_flags(&self, logger: &str) -> () {
+        log::debug!(target: logger, "Z: {}, N: {}, H: {}, C: {}",
+            self.get_flag(0x80) as u8, self.get_flag(0x40) as u8,
+            self.get_flag(0x20) as u8, self.get_flag(0x10) as u8);
     }
 }

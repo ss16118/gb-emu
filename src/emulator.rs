@@ -1,8 +1,10 @@
-use std::rc::Rc;
+use std::{cell::RefCell, rc::Rc};
 pub mod cartridge;
 use cartridge::*;
 pub mod cpu;
 use cpu::CPU;
+pub mod ram;
+use ram::RAM;
 pub mod address_bus;
 use address_bus::AddressBus;
 pub mod ppu;
@@ -18,8 +20,9 @@ use timer::Timer;
 pub struct Emulator {
     running: bool,
     paused: bool,
-    cartridge: Rc<Cartridge>,
-    cpu: Box<CPU>,
+    cartridge: Rc<RefCell<Cartridge>>,
+    cpu: Rc<RefCell<CPU>>,
+    ram: Rc<RefCell<RAM>>,
     address_bus: Box<AddressBus>,
     // Pixel Processing Unit
     ppu: Box<PPU>,
@@ -38,13 +41,25 @@ impl Emulator {
     pub fn new(rom_file: &str, trace: bool) -> Emulator {
         log::info!("Initializing emulator...");
 
+        // Cartridge initialization
         let mut cartridge = Cartridge::new();
         // Loads the ROM file into the cartridge
         cartridge.load_rom_file(rom_file);
         cartridge.print_info(true);
-        let cartridge_ptr = Rc::new(cartridge);
+        let cartridge_ptr = Rc::new(RefCell::new(cartridge));
+
+        // CPU initialization
         let cpu = CPU::new(trace);
-        let address_bus = AddressBus::new(cartridge_ptr.clone());
+        let cpu_ptr = Rc::new(RefCell::new(cpu));
+
+        // RAM initialization
+        let ram = RAM::new();
+        let ram_ptr = Rc::new(RefCell::new(ram));
+
+        // Address bus initialization
+        let address_bus = AddressBus::new(
+            cartridge_ptr.clone(), cpu_ptr.as_ptr(), ram_ptr.clone());
+        
         let ppu = PPU::new();
         let timer = Timer::new();        
 
@@ -52,7 +67,8 @@ impl Emulator {
             running: false,
             paused: true,
             cartridge: cartridge_ptr.clone(),
-            cpu: Box::new(cpu),
+            cpu: cpu_ptr.clone(),
+            ram: ram_ptr.clone(),
             address_bus: Box::new(address_bus),
             ppu: Box::new(ppu),
             timer: Box::new(timer),
@@ -61,7 +77,10 @@ impl Emulator {
         return emulator;
     }
 
-    pub fn run(&mut self) -> () {
+    /**
+     * Starts running the emulator
+     */
+    pub fn run(&mut self, debug: bool) -> () {
         log::info!("Emulator is running");
         self.running = true;
         self.paused = false;
@@ -69,10 +88,13 @@ impl Emulator {
             if self.paused {
                std::thread::sleep(std::time::Duration::from_millis(32));
             }
-            if !(*self.cpu).step(&mut self.address_bus) {
-                log::error!(target: "stdout", "CPU stopped");
-                std::process::exit(-1);
+
+            self.cpu.borrow_mut().step(&mut self.address_bus);
+
+            if debug {
+                self.cpu.borrow().print_state("trace_file");
             }
+
             self.tick();
         }
     }

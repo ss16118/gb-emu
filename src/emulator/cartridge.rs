@@ -205,6 +205,7 @@ impl Cartridge {
      * Reads a byte from the ROM
      */
     pub fn read(&self, address: u16) -> u8 {
+        // FIXME add support for RAM
         return self.rom[address as usize];
     }
 
@@ -229,7 +230,8 @@ impl Cartridge {
         unsafe {
             // Casts the title from a u8 array to a string
             let title = std::str::from_utf8_unchecked(&(*self.rom_header).title);
-            
+            // Removes the trailing NULL characters
+            let title = title.trim_end_matches(char::from(0));
             log::info!(target: print_target, "  Title: {}", title);
             // Prints the cartridge type
             let cartridge_type = CARTRIDGE_TYPE[&(*self.rom_header).cartridge_type];

@@ -120,7 +120,7 @@ impl CPU {
             let c_flag = ((self.read_reg(&RegType::RT_SP) & 0xFF) +
                 (self.fetched_data & 0xFF)) > 0x100;
             
-            self.set_flags(false, false, h_flag, c_flag);
+            self.set_flags(0, 0, h_flag as i8, c_flag as i8);
             let res: u16 = 
                 self.read_reg(&RegType::RT_SP).checked_add_signed(self.fetched_data as i16).unwrap();
             
@@ -238,19 +238,66 @@ impl CPU {
         unsafe {
             let result = self.read_reg(&(*self.instr).reg1) ^ self.fetched_data;
             self.set_register(&(*self.instr).reg1, result);
-            self.set_flags(result == 0, false, false, false);
+            self.set_flags((result == 0) as i8, 0, 0, 0);
         }
     }
 
     /**
      * Executes the INC instruction
      */
-    fn exec_inc(&mut self) -> () {
-        let val = self.fetched_data.checked_add(1).unwrap();
+    fn exec_inc(&mut self, bus: &mut AddressBus) -> () {
+        let mut val = self.fetched_data.checked_add(1).unwrap();
 
         if unsafe { (*self.instr).reg1.is_16_bit() } {
             self.tick(1);
         }
+
+        if unsafe { (*self.instr).reg1 == RegType::RT_HL && self.dest_is_mem } {
+            // Special case: INC (HL)
+            val &= 0xFF;
+            bus.write(self.mem_dest, val as u8);
+        } else {
+            // Normal case
+            unsafe {
+                self.set_register(&(*self.instr).reg1, val);
+                val = self.read_reg(&(*self.instr).reg1);
+            }
+        }
+        if (self.opcode & 0x03) == 0x03 {
+            // Do not set flags for INC BC, INC DE, INC HL, INC SP
+            return;
+        }
+        self.set_flags((val == 0) as i8, 0, ((val & 0x0F) == 0) as i8, -1);
+    }
+
+
+    /**
+     * Executes the DEC instruction
+     */
+    fn exec_dec(&mut self, bus: &mut AddressBus) -> () {
+        let mut val = self.fetched_data.checked_sub(1).unwrap();
+
+        if unsafe { (*self.instr).reg1.is_16_bit() } {
+            self.tick(1);
+        }
+
+        if unsafe { (*self.instr).reg1 == RegType::RT_HL && self.dest_is_mem } {
+            // Special case: DEC (HL)
+            bus.write(self.mem_dest, val as u8);
+        } else {
+            // Normal case
+            unsafe {
+                self.set_register(&(*self.instr).reg1, val);
+                val = self.read_reg(&(*self.instr).reg1);
+            }
+        }
+        
+        if (self.opcode & 0x0B) == 0x0B {
+            // Do not set flags for DEC BC, DEC DE, DEC HL, DEC SP
+            return;
+        }
+
+        self.set_flags((val == 0) as i8, 1, ((val & 0x0F) == 0x0F) as i8, -1);
     }
 
     /**
@@ -481,14 +528,16 @@ impl CPU {
     }
 
     /**
-     * A private function that sets the value of all flags
+     * A private function that sets the value of all flags.
+     * If the given value is positive, the flag is set.
+     * Otherwise, the flag is unmodified.
      */
     #[inline(always)]
-    fn set_flags(&mut self, z: bool, n: bool, h: bool, c: bool) -> () {
-        self.set_flag(0x80, z);
-        self.set_flag(0x40, n);
-        self.set_flag(0x20, h);
-        self.set_flag(0x10, c);
+    fn set_flags(&mut self, z: i8, n: i8, h: i8, c: i8) -> () {
+        if z > 0 { self.set_flag(0x80, z > 0); }
+        if n > 0 { self.set_flag(0x40, n > 0); }
+        if h > 0 { self.set_flag(0x20, h > 0); }
+        if c > 0 { self.set_flag(0x10, c > 0); }
     }
 
     /**
@@ -757,7 +806,8 @@ impl CPU {
             match (*self.instr).instr_type {
                 InstrType::IN_NOP   => { self.exec_none(); },
                 InstrType::IN_LD    => { self.exec_ld(bus); },
-                InstrType::IN_INC   => { },
+                InstrType::IN_INC   => { self.exec_inc(bus); },
+                InstrType::IN_DEC   => { self.exec_dec(bus); },
                 InstrType::IN_JP    => { self.exec_jp(bus); },
                 InstrType::IN_JR    => { self.exec_jr(bus); },
                 InstrType::IN_CALL  => { self.exec_call(bus); },
@@ -790,7 +840,7 @@ impl CPU {
 
             if self.trace {
                 let instr_str = unsafe { (*self.instr).str() };
-                log::trace!(target: "trace_file", "0x{:04X}: {:<10} ({:02X} {:02X} {:02X})", 
+                log::trace!(target: "trace_file", "0x{:04X}: {:<10} ({:02X} {:02X} {:02X}) ({0:04X})", 
                             pc, instr_str, self.opcode, bus.read(pc + 1), bus.read(pc + 2));
             }
 
@@ -808,7 +858,7 @@ impl CPU {
     pub fn print_state(&self, logger: &str) -> () {
         let mut state = String::new();
         state.push_str(&format!("======= CPU state =======\n"));
-        state.push_str(&format!("A: 0x{:02X}\t\t", self.registers.a));
+        state.push_str(&format!("A : 0x{:02X}\t", self.registers.a));
         state.push_str(&format!("BC: 0x{:02X}{:02X}\n", self.registers.b, self.registers.c));
         state.push_str(&format!("DE: 0x{:02X}{:02X}\t", self.registers.d, self.registers.e));
         state.push_str(&format!("HL: 0x{:02X}{:02X}\n", self.registers.h, self.registers.l));

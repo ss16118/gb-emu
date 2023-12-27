@@ -168,10 +168,10 @@ impl CPU {
      */
     fn exec_inc(&mut self) -> () {
         let val = self.fetched_data.checked_add(1).unwrap();
+
         if unsafe { (*self.instr).reg1.is_16_bit() } {
             self.tick(1);
         }
-    }
     }
 
     /*****************************************

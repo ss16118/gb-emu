@@ -100,6 +100,6 @@ impl Emulator {
     }
 
     fn tick(&mut self) -> () {
-
+        self.cpu.borrow_mut().tick(1);
     }
 }

@@ -3,6 +3,12 @@ use instruction::*;
 use crate::emulator::address_bus::AddressBus;
 use crate::emulator::Emulator;
 
+
+const Z_FLAG: u8 = 0x80;
+const N_FLAG: u8 = 0x40;
+const H_FLAG: u8 = 0x20;
+const C_FLAG: u8 = 0x10;
+
 struct Registers {
     /* 8-bit Registers */
     a: u8,
@@ -300,6 +306,114 @@ impl CPU {
         self.set_flags((val == 0) as i8, 1, ((val & 0x0F) == 0x0F) as i8, -1);
     }
 
+
+    /**
+     * Executes the ADD instruction
+     */
+    fn exec_add(&mut self) -> () {        
+        let mut val = 
+            unsafe { self.read_reg(&(*self.instr).reg2) } + self.fetched_data;
+
+        let is_16_bit = unsafe { (*self.instr).reg1.is_16_bit() };
+        if is_16_bit {
+            self.tick(1);
+        }
+
+        if unsafe { (*self.instr).reg1 == RegType::RT_SP } {
+            // Dealing with the special case of ADD SP, r8
+            // Converts `fetched_data` to signed 8-bit integer
+            let rel: i8 = self.fetched_data as i8;
+            val = self.read_reg(&RegType::RT_SP).checked_add_signed(rel as i16).unwrap();
+        }
+
+        // Flags
+        unsafe {
+            let mut z_flag: i8;
+            let mut h_flag: i8;
+            let mut c_flag: i8;
+            
+            // FIXME: The control flow here can probably be improved
+            if is_16_bit {
+                z_flag = -1;
+                h_flag = (((self.read_reg(&(*self.instr).reg1) & 0x0FFF) +
+                    (self.fetched_data & 0x0FFF)) >= 0x1000) as i8;
+                let tmp = self.read_reg(&(*self.instr).reg1) as u32 +
+                    self.fetched_data as u32;
+                c_flag = (tmp >= 0x10000) as i8;
+            } else {
+                z_flag = (val & 0xFF == 0) as i8;
+                h_flag = (((self.read_reg(&(*self.instr).reg1) & 0x0F) +
+                    (self.fetched_data & 0x0F)) >= 0x10) as i8;
+                c_flag = (((self.read_reg(&(*self.instr).reg1) & 0xFF) +
+                    (self.fetched_data & 0xFF)) >= 0x100) as i8;
+            }
+
+            if (*self.instr).reg1 == RegType::RT_SP {
+                z_flag = 0;
+                h_flag = (((self.read_reg(&RegType::RT_SP) & 0x0F) +
+                    (self.fetched_data & 0x0F)) >= 0x10) as i8;
+                c_flag = (((self.read_reg(&RegType::RT_SP) & 0xFF) +
+                    (self.fetched_data & 0xFF)) >= 0x100) as i8;
+            }
+
+
+            self.set_register(&(*self.instr).reg1, val);
+            self.set_flags(z_flag, 0, h_flag, c_flag);
+
+        }
+    }
+
+
+    /**
+     * Executes the ADC instruction, i.e., Add with Carry
+     */
+    fn exec_adc(&mut self) -> () {
+        unsafe {
+            let op1 = self.read_reg(&(*self.instr).reg1);
+            let op2 = self.fetched_data;
+            let c_flag = self.get_flag(C_FLAG) as u16;
+            let val: u16 = ((op1 + op2 + c_flag) & 0xFF) as u16;
+            self.set_register(&(*self.instr).reg1, val);
+
+
+            let h_flag = (op1 & 0x0F + op2 & 0x0F + c_flag) > 0x0F;
+            self.set_flags((val == 0) as i8, 0, h_flag as i8, (val > 0xFF) as i8);
+        }
+    }
+
+    /**
+     * Executes the SUB instruction
+     */
+    fn exec_sub(&mut self) -> () {
+        let op1 = unsafe { self.read_reg(&(*self.instr).reg1) };
+        let val = op1 - self.fetched_data;
+        
+        let z_flag = (val == 0) as i8;
+        let h_flag = (((op1 as i32 & 0x0F) - (self.fetched_data as i32 & 0x0F)) < 0) as i8;
+        let c_flag = (((op1 as i32) - (self.fetched_data as i32)) < 0) as i8;
+
+        unsafe { self.set_register(&(*self.instr).reg1, val) };
+        self.set_flags(z_flag, 1, h_flag, c_flag);
+    }
+
+    /**
+     * Executes the SBC instruction
+     */
+    fn exec_sbc(&mut self) -> () {
+        let c_val = self.get_flag(C_FLAG) as u8;
+        let op1 = unsafe { self.read_reg(&(*self.instr).reg1) };
+        let val = self.fetched_data - (c_val as u16);
+        
+        let z_flag = ((op1 - val) == 0) as i8;
+        let h_flag = (((op1 as i32 & 0x0F) - (self.fetched_data as i32 & 0x0F) -
+                (c_val as i32)) < 0) as i8;
+        let c_flag = (((op1 as i32) - (self.fetched_data as i32) -
+                (c_val as i32)) < 0) as i8;
+        
+        unsafe { self.set_register(&(*self.instr).reg1, op1 - val) };
+        self.set_flags(z_flag, 1, h_flag, c_flag);
+    }
+
     /**
      * Executes the POP instruction
      */
@@ -400,7 +514,7 @@ impl CPU {
     /**
      * Increments the CPU timer.
      */
-    fn tick(&mut self, ticks: u32) -> () {
+    pub fn tick(&mut self, ticks: u32) -> () {
         self.ticks += ticks;
     }
 
@@ -534,10 +648,10 @@ impl CPU {
      */
     #[inline(always)]
     fn set_flags(&mut self, z: i8, n: i8, h: i8, c: i8) -> () {
-        if z > 0 { self.set_flag(0x80, z > 0); }
-        if n > 0 { self.set_flag(0x40, n > 0); }
-        if h > 0 { self.set_flag(0x20, h > 0); }
-        if c > 0 { self.set_flag(0x10, c > 0); }
+        if z > 0 { self.set_flag(Z_FLAG, z > 0); }
+        if n > 0 { self.set_flag(N_FLAG, n > 0); }
+        if h > 0 { self.set_flag(H_FLAG, h > 0); }
+        if c > 0 { self.set_flag(C_FLAG, c > 0); }
     }
 
     /**
@@ -545,8 +659,8 @@ impl CPU {
      * current instruction is true.
      */
     fn check_cond(&mut self) -> bool {
-        let z_flag = self.get_flag(0x80);
-        let c_flag = self.get_flag(0x10);
+        let z_flag = self.get_flag(Z_FLAG);
+        let c_flag = self.get_flag(C_FLAG);
 
         match &unsafe { &(*self.instr) }.cond_type {
             CondType::CT_NONE => { return true; },
@@ -805,18 +919,30 @@ impl CPU {
             // FIXME There is no better way to do it in Rust?
             match (*self.instr).instr_type {
                 InstrType::IN_NOP   => { self.exec_none(); },
+                // Load instructions
                 InstrType::IN_LD    => { self.exec_ld(bus); },
+                InstrType::IN_LDH   => { self.exec_ldh(bus); },
+
+                // Arithmetic instructions
                 InstrType::IN_INC   => { self.exec_inc(bus); },
                 InstrType::IN_DEC   => { self.exec_dec(bus); },
+                InstrType::IN_ADD   => { self.exec_add(); },
+                InstrType::IN_ADC   => { self.exec_adc(); },
+                InstrType::IN_SUB   => { self.exec_sub(); },
+                InstrType::IN_SBC   => { self.exec_sbc(); },
+                InstrType::IN_XOR   => { self.exec_xor(); },
+
+                // Jump instructions
                 InstrType::IN_JP    => { self.exec_jp(bus); },
                 InstrType::IN_JR    => { self.exec_jr(bus); },
                 InstrType::IN_CALL  => { self.exec_call(bus); },
                 InstrType::IN_RET   => { self.exec_ret(bus); },
                 InstrType::IN_RETI  => { self.exec_reti(bus); },
                 InstrType::IN_RST   => { self.exec_rst(bus); },
+
                 InstrType::IN_DI    => { self.exec_di(); },
-                InstrType::IN_XOR   => { self.exec_xor(); },
-                InstrType::IN_LDH   => { self.exec_ldh(bus); },
+
+                // Stack-related instructions
                 InstrType::IN_PUSH  => { self.exec_push(bus); },
                 InstrType::IN_POP   => { self.exec_pop(bus); },
                 _ => {
@@ -837,15 +963,14 @@ impl CPU {
             let pc = self.read_reg(&RegType::RT_PC);
             // Fetch and Decode
             self.fetch_instruction(bus);
+            // Execute
+            self.fetch_data(bus);
 
             if self.trace {
                 let instr_str = unsafe { (*self.instr).str() };
-                log::trace!(target: "trace_file", "0x{:04X}: {:<10} ({:02X} {:02X} {:02X}) ({0:04X})", 
-                            pc, instr_str, self.opcode, bus.read(pc + 1), bus.read(pc + 2));
+                log::trace!(target: "trace_file", "{:<6} - 0x{:04X}: {:<10} ({:02X} {:02X} {:02X}) ({0:04X})", 
+                            self.ticks, pc, instr_str, self.opcode, bus.read(pc + 1), bus.read(pc + 2));
             }
-
-            // Execute
-            self.fetch_data(bus);
 
             self.execute(bus);
         }
@@ -859,9 +984,9 @@ impl CPU {
         let mut state = String::new();
         state.push_str(&format!("======= CPU state =======\n"));
         state.push_str(&format!("A : 0x{:02X}\t", self.registers.a));
-        state.push_str(&format!("BC: 0x{:02X}{:02X}\n", self.registers.b, self.registers.c));
-        state.push_str(&format!("DE: 0x{:02X}{:02X}\t", self.registers.d, self.registers.e));
-        state.push_str(&format!("HL: 0x{:02X}{:02X}\n", self.registers.h, self.registers.l));
+        state.push_str(&format!("BC: 0x{:02X}{:02X}\t", self.registers.b, self.registers.c));
+        state.push_str(&format!("DE: 0x{:02X}{:02X}\n", self.registers.d, self.registers.e));
+        state.push_str(&format!("HL: 0x{:02X}{:02X}\t", self.registers.h, self.registers.l));
         state.push_str(&format!("PC: 0x{:04X}\t", self.registers.pc));
         state.push_str(&format!("SP: 0x{:04X}", self.registers.sp));
         log::debug!(target: logger, "{}", state);
@@ -872,8 +997,10 @@ impl CPU {
      * Prints all the flags in register f.
      */
     pub fn print_flags(&self, logger: &str) -> () {
-        log::debug!(target: logger, "Z: {}, N: {}, H: {}, C: {}",
-            self.get_flag(0x80) as u8, self.get_flag(0x40) as u8,
-            self.get_flag(0x20) as u8, self.get_flag(0x10) as u8);
+        log::debug!(target: logger, "Flags: {}{}{}{}",
+            if self.get_flag(Z_FLAG) { 'Z' } else { '-' },
+            if self.get_flag(N_FLAG) { 'N' } else { '-' },
+            if self.get_flag(H_FLAG) { 'H' } else { '-' },
+            if self.get_flag(C_FLAG) { 'C' } else { '-' });
     }
 }

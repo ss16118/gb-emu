@@ -242,10 +242,44 @@ impl CPU {
      */
     fn exec_xor(&mut self) -> () {
         unsafe {
-            let result = self.read_reg(&(*self.instr).reg1) ^ self.fetched_data;
-            self.set_register(&(*self.instr).reg1, result);
-            self.set_flags((result == 0) as i8, 0, 0, 0);
+            let val = self.read_reg(&(*self.instr).reg1) ^ self.fetched_data;
+            self.set_register(&(*self.instr).reg1, val);
+            self.set_flags((val == 0) as i8, 0, 0, 0);
         }
+    }
+
+    /**
+     * Executes the AND instruction
+     */
+    fn exec_and(&mut self) -> () {
+        unsafe {
+            let val = self.read_reg(&(*self.instr).reg1) & self.fetched_data;
+            self.set_register(&(*self.instr).reg1, val);
+            self.set_flags((val == 0) as i8, 0, 1, 0)
+        }
+    }
+
+    /**
+     * Executes the OR instruction
+     */
+    fn exec_or(&mut self) -> () {
+        unsafe {
+            let val = self.read_reg(&(*self.instr).reg1) | self.fetched_data;
+            self.set_register(&(*self.instr).reg1, val);
+            self.set_flags((val == 0) as i8, 0, 0, 0);
+        }
+    }
+
+    /**
+     * Executes the CP instruction
+     */
+    fn exec_cp(&mut self) -> () {
+        let op1 = unsafe { self.read_reg(&(*self.instr).reg1) }; 
+        let val = op1 as i32  - self.fetched_data as i32;
+        
+        let h_flag = ((op1 as i32) & 0x0F) - ((self.fetched_data as i32) & 0x0F) < 0;
+
+        self.set_flags((val == 0) as i8, 1, h_flag as i8, (val < 0) as i8);
     }
 
     /**
@@ -930,7 +964,12 @@ impl CPU {
                 InstrType::IN_ADC   => { self.exec_adc(); },
                 InstrType::IN_SUB   => { self.exec_sub(); },
                 InstrType::IN_SBC   => { self.exec_sbc(); },
+
+                // Bitwise instructions
                 InstrType::IN_XOR   => { self.exec_xor(); },
+                InstrType::IN_AND   => { self.exec_and(); },
+                InstrType::IN_OR    => { self.exec_or(); },
+                InstrType::IN_CP    => { self.exec_cp(); },
 
                 // Jump instructions
                 InstrType::IN_JP    => { self.exec_jp(bus); },

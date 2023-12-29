@@ -483,6 +483,132 @@ impl CPU {
     }
 
 
+    /***********  CB instructions ***********/
+    
+
+    fn exec_cb(&mut self, bus: &mut AddressBus) -> () {
+        let cb_opcode = self.fetched_data as u8;
+        // On which register to perform the operation
+        let reg = cb_decode_reg(cb_opcode & 0b111);
+        // On which bit to perform the operation
+        let bit = (cb_opcode >> 3) & 0b111;
+        // The operation to perform
+        let bit_op = (cb_opcode >> 6) & 0b11;
+        let reg_val = self.read_cb_reg(reg, bus);
+
+        self.tick(1);
+
+
+        if *reg == RegType::RT_HL {
+            self.tick(2);
+        }
+
+        match bit_op {
+            1 => {
+                // BIT
+                // Copies the complement of the specified bit to the Z flag
+                let z_flag = ((reg_val & (1 << bit)) == 0) as i8;
+                self.set_flags(z_flag, 0, 1, -1);
+                return;
+            },
+            2 => {
+                // RES
+                // Resets the specified bit
+                let new_val = reg_val & !(1 << bit);
+                self.set_cb_reg(reg, new_val, bus);
+                return;
+            },
+            3 => {
+                // SET
+                let new_val = reg_val | (1 << bit);
+                self.set_cb_reg(reg, new_val, bus);
+                return;
+            },
+            _ => {
+                // Handle all other cases
+                let c_flag = self.get_flag(C_FLAG) as u8;
+                match bit {
+                    0 => {
+                        // RLC
+                        // Rotates the register left
+                        let mut set_c = false;
+                        let mut new_val = (reg_val << 1) & 0xFF;
+                        // If bit 7 is not set
+                        if (reg_val & (1 << 7)) != 0 {
+                            new_val |= 1;
+                            set_c = true;
+                        }
+                        self.set_cb_reg(reg, new_val, bus);
+                        self.set_flags((new_val == 0) as i8, 0, 0, set_c as i8);
+                    },
+                    1 => {
+                        // RRC
+                        // Rotates the register right
+                        let mut new_val = reg_val >> 1;
+                        new_val |= reg_val << 7;
+                        self.set_cb_reg(reg, new_val, bus);
+                        self.set_flags((new_val == 0) as i8, 0, 0, (reg_val & 1) as i8);
+                    },
+                    2 => {
+                        // RL
+                        // Rotates the register left through the carry flag
+                        let mut new_val = reg_val << 1;
+                        new_val |= c_flag;
+
+                        self.set_cb_reg(reg, new_val, bus);
+                        self.set_flags((new_val == 0) as i8, 0, 0, (reg_val & 0x80) as i8);
+                    },
+                    3 => {
+                        // RR
+                        // Rotates the register right through the carry flag
+                        let mut new_val = reg_val >> 1;
+                        new_val |= c_flag << 7;
+
+                        self.set_cb_reg(reg, new_val, bus);
+                        self.set_flags((new_val == 0) as i8, 0, 0, (reg_val & 1) as i8);
+                    },
+                    4 => {
+                        // SLA
+                        // Shifts the register left into the carry flag
+                        let new_val = reg_val << 1;
+
+                        self.set_cb_reg(reg, new_val, bus);
+                        self.set_flags((new_val == 0) as i8, 0, 0, (reg_val & 0x80) as i8);
+                    },
+                    5 => {
+                        // SRA
+                        // Shifts the register right into the carry flag
+                        let new_val = (reg_val as i8 >> 1) as u8;
+                        self.set_cb_reg(reg, new_val, bus);
+                        self.set_flags((new_val == 0) as i8, 0, 0, (reg_val & 1) as i8);
+                    },
+                    6 => {
+                        // SWAP
+                        // Swaps the upper and lower nibbles of the register
+                        let new_val = ((reg_val & 0x0F) << 4) | ((reg_val & 0xF0) >> 4);
+                        self.set_cb_reg(reg, new_val, bus);
+                        self.set_flags((new_val == 0) as i8, 0, 0, 0);
+                    },
+                    7 => {
+                        // SRL
+                        // Shifts the register right into the carry flag
+                        let new_val = reg_val >> 1;
+                        self.set_cb_reg(reg, new_val, bus);
+                        self.set_flags((new_val == 0) as i8, 0, 0, (reg_val & 1) as i8);
+                    },
+                    _ => {
+                        log::error!(target: "stdout",
+                            "Invalid CB instruction: {:02X}", cb_opcode);
+                        std::process::exit(-1);
+                    }
+                }
+            }
+        }
+
+    }
+
+    /***********  End of CB instructions ***********/
+
     /*****************************************
      * End of functions that process instructions
      *****************************************/
@@ -636,6 +762,43 @@ impl CPU {
         };
     }
 
+
+    /**
+     * A private function that reads the value of the register
+     * used by a CB instruction. If HL is used, the value of
+     * the memory location specified by HL is returned.
+     */
+    #[inline(always)]
+    fn read_cb_reg(&mut self, reg: &RegType, bus: &mut AddressBus) -> u8 {
+        if *reg == RegType::RT_HL {
+            return bus.read(self.read_reg(&RegType::RT_HL));
+        } else {
+            if reg.is_16_bit() {
+                log::error!(target: "stdout", 
+                    "16-bit register {:?} not supported for CB instructions", reg);
+            }
+            return self.read_reg(reg) as u8;
+        }
+    }
+
+
+    /**
+     * A private function that sets the value of the register used
+     * by a CB instruction. If HL is used, the value of the memory
+     * location specified by HL is set.
+     */
+    #[inline(always)]
+    fn set_cb_reg(&mut self, reg: &RegType, value: u8, bus: &mut AddressBus) -> () {
+        if *reg == RegType::RT_HL {
+            bus.write(self.read_reg(&RegType::RT_HL), value);
+        } else {
+            if reg.is_16_bit() {
+                log::error!(target: "stdout",
+                    "16-bit register {:?} not supported for CB instructions", reg);
+            }
+            self.set_register(reg, value as u16);
+        }
+    }
 
     /**
      * A private function that retrieves the value of the interrupt
@@ -980,6 +1143,7 @@ impl CPU {
                 InstrType::IN_RST   => { self.exec_rst(bus); },
 
                 InstrType::IN_DI    => { self.exec_di(); },
+                InstrType::IN_CB    => { self.exec_cb(bus); }
 
                 // Stack-related instructions
                 InstrType::IN_PUSH  => { self.exec_push(bus); },

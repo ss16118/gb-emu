@@ -132,6 +132,36 @@ pub enum InstrType {
     IN_SET
 }
 
+
+/**
+ * A lookup table that maps a given 8-bit integer
+ * to a register that will be used by the CB instruction.
+ */
+pub static CB_REG_LOOKUP: Map<u8, RegType> = phf_map! {
+    0x01_u8 => RegType::RT_B,
+    0x02_u8 => RegType::RT_C,
+    0x03_u8 => RegType::RT_D,
+    0x04_u8 => RegType::RT_E,
+    0x05_u8 => RegType::RT_H,
+    0x06_u8 => RegType::RT_L,
+    0x07_u8 => RegType::RT_HL,
+    0x08_u8 => RegType::RT_A,
+};
+
+
+/**
+ * Decodes and returns the register that will be used by the CB 
+ * instruction. A wrapper around CB_REG_LOOKUP.
+ */
+pub fn cb_decode_reg(opcode: u8) -> &'static RegType {
+    if opcode > 0b111 {
+        return &RegType::RT_NONE;
+    }
+    return &CB_REG_LOOKUP[&opcode];
+}
+
+
+
 impl InstrType {
     /**
      * Returns a string representation of the instruction type.
@@ -615,6 +645,7 @@ pub static INSTRUCTIONS: Map<u8, Instruction> = phf_map! {
         RegType::RT_NONE, RegType::RT_NONE, CondType::CT_Z, 0),
     0xCC_u8 => Instruction::new(InstrType::IN_CALL, AddrMode::AM_D16_R,
         RegType::RT_NONE, RegType::RT_NONE, CondType::CT_Z, 0),
+    0xCB_u8 => Instruction::default(InstrType::IN_CB, AddrMode::AM_D8),
     0xCD_u8 => Instruction::default(InstrType::IN_CALL, AddrMode::AM_D16),
     0xCE_u8 => Instruction::with_one_reg(InstrType::IN_ADC, AddrMode::AM_R_D8, RegType::RT_A),
     0xCF_u8 => Instruction::new(InstrType::IN_RST, AddrMode::AM_IMP,
@@ -672,6 +703,7 @@ pub static INSTRUCTIONS: Map<u8, Instruction> = phf_map! {
         RegType::RT_NONE, RegType::RT_NONE, CondType::CT_NONE, 0x30),
     0xFA_u8 => Instruction::with_two_regs(InstrType::IN_LD, AddrMode::AM_R_A16,
         RegType::RT_A, RegType::RT_NONE),
+    0xFB_u8 => Instruction::default(InstrType::IN_EI, AddrMode::AM_IMP),
     0xFE_u8 => Instruction::with_one_reg(InstrType::IN_CP, AddrMode::AM_R_D8, RegType::RT_A),
     0xFF_u8 => Instruction::new(InstrType::IN_RST, AddrMode::AM_IMP,
         RegType::RT_NONE, RegType::RT_NONE, CondType::CT_NONE, 0x38),

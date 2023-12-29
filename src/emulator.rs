@@ -87,10 +87,14 @@ impl Emulator {
         while self.running {
             if self.paused {
                std::thread::sleep(std::time::Duration::from_millis(32));
+               continue;
             }
 
             self.cpu.borrow_mut().step(&mut self.address_bus);
-
+            if self.cpu.borrow().is_halted() {
+                self.paused = true;
+            }
+            
             if debug {
                 self.cpu.borrow().print_state("trace_file");
             }

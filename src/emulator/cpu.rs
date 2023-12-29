@@ -38,6 +38,7 @@ pub struct CPU {
     stepping: bool,
     // Interrupt
     interrupt_master_enable: bool,
+    enabling_ime: bool,
     // Current fetch
     // Current opcode
     opcode: u8,
@@ -64,6 +65,7 @@ impl CPU {
             halted: false,
             stepping: false,
             interrupt_master_enable: false,
+            enabling_ime: false,
             opcode: 0,
             fetched_data: 0,
             mem_dest: 0,
@@ -186,9 +188,9 @@ impl CPU {
      * Executes the JP instruction. A wrapper function for goto_addr
      */
     fn exec_jr(&mut self, bus: &mut AddressBus) -> () {
-        let rel: i16 = (self.fetched_data & 0xFF) as i16;
+        let rel: i8 = (self.fetched_data & 0xFF) as i8;
         let pc = self.read_reg(&RegType::RT_PC);
-        let addr = pc.checked_add_signed(rel).unwrap();
+        let addr = pc.checked_add_signed(rel as i16).unwrap();
         self.goto_addr(bus, addr, false);
     }
 
@@ -286,7 +288,7 @@ impl CPU {
      * Executes the INC instruction
      */
     fn exec_inc(&mut self, bus: &mut AddressBus) -> () {
-        let mut val = self.fetched_data.checked_add(1).unwrap();
+        let mut val = self.fetched_data.wrapping_add(1);
 
         if unsafe { (*self.instr).reg1.is_16_bit() } {
             self.tick(1);
@@ -315,7 +317,7 @@ impl CPU {
      * Executes the DEC instruction
      */
     fn exec_dec(&mut self, bus: &mut AddressBus) -> () {
-        let mut val = self.fetched_data.checked_sub(1).unwrap();
+        let mut val = self.fetched_data.wrapping_sub(1);
 
         if unsafe { (*self.instr).reg1.is_16_bit() } {
             self.tick(1);
@@ -345,8 +347,8 @@ impl CPU {
      * Executes the ADD instruction
      */
     fn exec_add(&mut self) -> () {        
-        let mut val = 
-            unsafe { self.read_reg(&(*self.instr).reg2) } + self.fetched_data;
+        let mut val: u32 = 
+            (unsafe { self.read_reg(&(*self.instr).reg1) } + self.fetched_data) as u32;
 
         let is_16_bit = unsafe { (*self.instr).reg1.is_16_bit() };
         if is_16_bit {
@@ -357,7 +359,7 @@ impl CPU {
             // Dealing with the special case of ADD SP, r8
             // Converts `fetched_data` to signed 8-bit integer
             let rel: i8 = self.fetched_data as i8;
-            val = self.read_reg(&RegType::RT_SP).checked_add_signed(rel as i16).unwrap();
+            val = self.read_reg(&RegType::RT_SP).checked_add_signed(rel as i16).unwrap() as u32;
         }
 
         // Flags
@@ -391,7 +393,7 @@ impl CPU {
             }
 
 
-            self.set_register(&(*self.instr).reg1, val);
+            self.set_register(&(*self.instr).reg1, (val & 0xFFFF) as u16);
             self.set_flags(z_flag, 0, h_flag, c_flag);
 
         }
@@ -420,7 +422,7 @@ impl CPU {
      */
     fn exec_sub(&mut self) -> () {
         let op1 = unsafe { self.read_reg(&(*self.instr).reg1) };
-        let val = op1 - self.fetched_data;
+        let val = op1.wrapping_sub(self.fetched_data);
         
         let z_flag = (val == 0) as i8;
         let h_flag = (((op1 as i32 & 0x0F) - (self.fetched_data as i32 & 0x0F)) < 0) as i8;
@@ -481,10 +483,6 @@ impl CPU {
 
         self.tick(1);
     }
-
-
-    /***********  CB instructions ***********/
-    
 
     fn exec_cb(&mut self, bus: &mut AddressBus) -> () {
         let cb_opcode = self.fetched_data as u8;
@@ -607,7 +605,132 @@ impl CPU {
 
     }
 
-    /***********  End of CB instructions ***********/
+    /**
+     * Executes the CPL instruction.
+     * Complements the contents of register A.
+     */
+    fn exec_cpl(&mut self) -> () {
+        let val = self.read_reg(&RegType::RT_A);
+        self.set_register(&RegType::RT_A, !val);
+        self.set_flags(-1, 1, 1, -1);
+    }
+
+    /**
+     * Executes the CCF instruction.
+     * Complements the carry flag.
+     */
+    fn exec_ccf(&mut self) -> () {
+        let c_flag = self.get_flag(C_FLAG);
+        self.set_flags(-1, 0, 0, c_flag as i8 ^ 1);
+    }
+
+    /**
+     * Executes the SCF instruction.
+     * Sets the carry flag.
+     */
+    fn exec_scf(&mut self) -> () {
+        self.set_flags(-1, 0, 0, 1);
+    }
+
+    /**
+     * Executes the DAA instruction.
+     * Adjusts register A to contain a binary coded decimal.
+     */
+    fn exec_daa(&mut self) -> () {
+        let mut val: u8 = 0;
+        let mut new_c_flag: i8 = 0;
+
+        let mut c_flag = self.get_flag(C_FLAG);
+        let mut h_flag = self.get_flag(H_FLAG);
+        let mut n_flag = self.get_flag(N_FLAG);
+
+        if h_flag || (!h_flag && (val & 0x0F) > 9) {
+            val += 6;
+        }
+
+        if c_flag || (!c_flag && val > 0x99) {
+            val |= 0x60;
+            new_c_flag = 1;
+        }
+
+        let a_val = self.read_reg(&RegType::RT_A);
+
+        let new_val = a_val.wrapping_add_signed(if n_flag { -(val as i16) } else { val as i16 });
+        self.set_register(&RegType::RT_A, new_val);
+        self.set_flags((new_val == 0) as i8, -1, 0, new_c_flag);
+    }
+
+    /**
+     * Executes the RLCA instruction.
+     * Rotates the contents of register A left by 1 bit.
+     */
+    fn exec_rlca(&mut self) -> () {
+        let mut val = self.read_reg(&RegType::RT_A);
+        let c_flag = (val >> 7) & 1;
+        val = (val << 1) | c_flag;
+        self.set_register(&RegType::RT_A, val);
+        self.set_flags((val == 0) as i8, 0, 0, c_flag as i8);
+    }
+
+    /**
+     * Executes the RRCA instruction.
+     * Rotates the contents of register A right by 1 bit.
+     */
+    fn exec_rrca(&mut self) -> () {
+        let mut val = self.read_reg(&RegType::RT_A);
+        let c_flag = val & 1;
+        val = (val >> 1) | (c_flag << 7);
+        self.set_register(&RegType::RT_A, val);
+        self.set_flags(0, 0, 0, c_flag as i8);
+    }
+
+    /**
+     * Executes the RLA instruction.
+     * Rotates the contents of register A left through the carry flag.
+     */
+    fn exec_rla(&mut self) -> () {
+        let mut val = self.read_reg(&RegType::RT_A);
+        let c_flag = self.get_flag(C_FLAG) as u16;
+        val = (val << 1) | c_flag;
+        self.set_register(&RegType::RT_A, val);
+        self.set_flags(0, 0, 0, (val >> 7) as i8);
+    }
+
+    /**
+     * Executes the RRA instruction.
+     * Rotates the contents of register A right through the carry flag.
+     */
+    fn exec_rra(&mut self) -> () {
+        let c_flag = self.get_flag(C_FLAG) as u16;
+        let mut val = self.read_reg(&RegType::RT_A);
+        let new_c_flag = val & 1;
+        val = (val >> 1) | (c_flag << 7);
+        self.set_register(&RegType::RT_A, val);
+        self.set_flags(0, 0, 0, new_c_flag as i8);
+    }
+
+    /**
+     * Executes the HALT instruction.
+     */
+    fn exec_halt(&mut self) -> () {
+        self.halted = true;
+    }
+
+    /**
+     * Executes the STOP instruction.
+     */
+    fn exec_stop(&mut self) -> () {
+        log::info!("STOP instruction executed");
+        std::process::exit(0);
+    }
+    
+
+    /**
+     * Executes the EI instruction.
+     */
+    fn exec_ei(&mut self) -> () {
+        self.enabling_ime = true;
+    }
 
     /*****************************************
      * End of functions that process instructions
@@ -845,10 +968,10 @@ impl CPU {
      */
     #[inline(always)]
     fn set_flags(&mut self, z: i8, n: i8, h: i8, c: i8) -> () {
-        if z > 0 { self.set_flag(Z_FLAG, z > 0); }
-        if n > 0 { self.set_flag(N_FLAG, n > 0); }
-        if h > 0 { self.set_flag(H_FLAG, h > 0); }
-        if c > 0 { self.set_flag(C_FLAG, c > 0); }
+        if z >= 0 { self.set_flag(Z_FLAG, z > 0); }
+        if n >= 0 { self.set_flag(N_FLAG, n > 0); }
+        if h >= 0 { self.set_flag(H_FLAG, h > 0); }
+        if c >= 0 { self.set_flag(C_FLAG, c > 0); }
     }
 
     /**
@@ -1142,8 +1265,20 @@ impl CPU {
                 InstrType::IN_RETI  => { self.exec_reti(bus); },
                 InstrType::IN_RST   => { self.exec_rst(bus); },
 
+                // Misc instructions
                 InstrType::IN_DI    => { self.exec_di(); },
                 InstrType::IN_CB    => { self.exec_cb(bus); }
+                InstrType::IN_RLCA  => { self.exec_rlca(); },
+                InstrType::IN_RLA   => { self.exec_rla(); },
+                InstrType::IN_RRCA  => { self.exec_rrca(); },
+                InstrType::IN_RRA   => { self.exec_rra(); },
+                InstrType::IN_CPL   => { self.exec_cpl(); },
+                InstrType::IN_CCF   => { self.exec_ccf(); },
+                InstrType::IN_SCF   => { self.exec_scf(); },
+                InstrType::IN_DAA   => { self.exec_daa(); },
+                InstrType::IN_HALT  => { self.exec_halt(); },
+                InstrType::IN_STOP  => { self.exec_stop(); },
+                InstrType::IN_EI    => { self.exec_ei(); },
 
                 // Stack-related instructions
                 InstrType::IN_PUSH  => { self.exec_push(bus); },
@@ -1164,6 +1299,7 @@ impl CPU {
     pub fn step(&mut self, bus: &mut AddressBus) -> bool {
         if !self.halted {
             let pc = self.read_reg(&RegType::RT_PC);
+
             // Fetch and Decode
             self.fetch_instruction(bus);
             // Execute
@@ -1171,13 +1307,29 @@ impl CPU {
 
             if self.trace {
                 let instr_str = unsafe { (*self.instr).str() };
-                log::trace!(target: "trace_file", "{:<6} - 0x{:04X}: {:<10} ({:02X} {:02X} {:02X}) ({0:04X})", 
-                            self.ticks, pc, instr_str, self.opcode, bus.read(pc + 1), bus.read(pc + 2));
+                // log::trace!(target: "trace_file", "{:<6} - 0x{:04X}: {:<10} ({:02X} {:02X} {:02X}) A:{:02X} F: {}{}{}{} BC: {:02X}{:02X} DE:{:02X}{:02X} HL: {:02X}{:02X}",
+                println!("{:<6} - 0x{:04X}: {:<10} ({:02X} {:02X} {:02X}) A:{:02X} F: {}{}{}{} BC: {:02X}{:02X} DE:{:02X}{:02X} HL: {:02X}{:02X}",
+                            self.ticks, pc, instr_str, 
+                            self.opcode, bus.read(pc + 1), bus.read(pc + 2),
+                            self.registers.a,
+                            if self.get_flag(Z_FLAG) { 'Z' } else { '-' },
+                            if self.get_flag(N_FLAG) { 'N' } else { '-' },
+                            if self.get_flag(H_FLAG) { 'H' } else { '-' },
+                            if self.get_flag(C_FLAG) { 'C' } else { '-' },
+                            self.registers.b, self.registers.c,
+                            self.registers.d, self.registers.e,
+                            self.registers.h, self.registers.l
+                        );
             }
 
             self.execute(bus);
         }
         return true;
+    }
+
+    #[inline(always)]
+    pub fn is_halted(&self) -> bool {
+        return self.halted;
     }
 
     /**

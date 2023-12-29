@@ -58,18 +58,10 @@ impl AddressBus {
         if address <= 0x8000 {
             // Reads from ROM
             return self.cartridge.borrow().read(address);
-        } else if address < 0x9800 {
-            // Reads from Character RAM
-            log::error!("Reading from Character RAM currently not supported");
-            std::process::exit(-5);
-        } else if address < 0x9C00 {
-            // Reads from BG Map Data 1
-            log::error!("Reading from BG Map Data 1 currently not supported");
-            std::process::exit(-5);
         } else if address < 0xA000 {
             // Reads from BG Map Data 2
-            log::error!("Reading from BG Map Data 2 currently not supported");
-            std::process::exit(-5);
+            log::error!("Reading from Char/Map data {:04X} currently not supported", address);
+            return 0;
         } else if address < 0xC000 {
             // Reads from Cartridge RAM
             self.cartridge.borrow().read(address);
@@ -79,7 +71,8 @@ impl AddressBus {
         } else if address < 0xFEA0 {
             // Reads from Object Attribute Memory (OAM)
             log::error!("Reading from Object Attribute Memory (OAM) currently not supported");
-            std::process::exit(-5);
+            // std::process::exit(-5);
+            return 0;
         } else if address < 0xFF00 {
             // Reads from reserved memory (UNUSABLE)
             return 0;
@@ -109,18 +102,10 @@ impl AddressBus {
         if address <= 0x8000 {
             // Writes to ROM
             self.cartridge.borrow_mut().write(address, data);
-        } else if address < 0x9800 {
-            // Writes to Character RAM
-            log::error!("Writing to Character RAM currently not supported");
-            std::process::exit(-5);
-        } else if address < 0x9C00 {
-            // Writes to BG Map Data 1
-            log::error!("Writing to BG Map Data 1 currently not supported");
-            std::process::exit(-5);
         } else if address < 0xA000 {
             // Writes to BG Map Data 2
-            log::error!("Writing to BG Map Data 2 currently not supported");
-            std::process::exit(-5);
+            log::error!("Writing to Char/Map data {:04X} currently not supported", address);
+            // std::process::exit(-5);
         } else if address < 0xC000 {
             // Writes to Cartridge RAM
             self.cartridge.borrow_mut().write(address, data);

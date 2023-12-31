@@ -1,3 +1,4 @@
+use std::sync::{Arc, Mutex};
 use std::{cell::RefCell, rc::Rc};
 use crate::emulator::cartridge::Cartridge;
 use crate::emulator::cpu::CPU;
@@ -7,13 +8,13 @@ use super::cartridge;
  * A struct that defines the address bus
  */
 pub struct AddressBus {
-    cartridge: Rc<RefCell<Cartridge>>,
+    cartridge: Arc<Mutex<Cartridge>>,
     // I know this is not a good practice in Rust,
     // since Emulator is technically the owner of CPU,
     // and Rust does not allow multiple mutable references
     // That's why I am using a raw pointer here
     cpu: *mut CPU,
-    ram: Rc<RefCell<RAM>>,
+    ram: Arc<Mutex<RAM>>,
 }
 
 /**
@@ -36,8 +37,8 @@ pub struct AddressBus {
  */
 
 impl AddressBus {
-    pub fn new(cartridge: Rc<RefCell<Cartridge>>,
-            cpu: *mut CPU, ram: Rc<RefCell<RAM>>) 
+    pub fn new(cartridge: Arc<Mutex<Cartridge>>,
+            cpu: *mut CPU, ram: Arc<Mutex<RAM>>)
             -> AddressBus {
         
         log::info!("Initializing address bus...");
@@ -57,17 +58,17 @@ impl AddressBus {
         // Given address indicates ROM address
         if address <= 0x8000 {
             // Reads from ROM
-            return self.cartridge.borrow().read(address);
+            return self.cartridge.lock().unwrap().read(address);
         } else if address < 0xA000 {
             // Reads from BG Map Data 2
             log::error!("Reading from Char/Map data {:04X} currently not supported", address);
             return 0;
         } else if address < 0xC000 {
             // Reads from Cartridge RAM
-            self.cartridge.borrow().read(address);
+            self.cartridge.lock().unwrap().read(address);
         } else if address < 0xE000 {
             // Reads from Work RAM (WRAM)
-            return self.ram.borrow().wram_read(address);
+            return self.ram.lock().unwrap().wram_read(address);
         } else if address < 0xFEA0 {
             // Reads from Object Attribute Memory (OAM)
             log::error!("Reading from Object Attribute Memory (OAM) currently not supported");
@@ -82,7 +83,7 @@ impl AddressBus {
             return 0;
         } else if address < 0xFFFF {
             // Reads from High RAM (HRAM)
-            return self.ram.borrow().hram_read(address);
+            return self.ram.lock().unwrap().hram_read(address);
         } else if address == 0xFFFF {
             // Reads from Interrupts Enable Register (IE)
             return unsafe { (*self.cpu).get_ie_register() };
@@ -101,17 +102,17 @@ impl AddressBus {
         // Given address indicates ROM address
         if address <= 0x8000 {
             // Writes to ROM
-            self.cartridge.borrow_mut().write(address, data);
+            self.cartridge.lock().unwrap().write(address, data);
         } else if address < 0xA000 {
             // Writes to BG Map Data 2
             log::error!("Writing to Char/Map data {:04X} currently not supported", address);
             // std::process::exit(-5);
         } else if address < 0xC000 {
             // Writes to Cartridge RAM
-            self.cartridge.borrow_mut().write(address, data);
+            self.cartridge.lock().unwrap().write(address, data);
         } else if address < 0xE000 {
             // Writes to Work RAM (WRAM)
-            self.ram.borrow_mut().wram_write(address, data);
+            self.ram.lock().unwrap().wram_write(address, data);
         } else if address < 0xFEA0 {
             // Writes to Object Attribute Memory (OAM)
             log::error!("Writing to Object Attribute Memory (OAM) currently not supported");
@@ -125,7 +126,7 @@ impl AddressBus {
             // std::process::exit(-5);
         } else if address < 0xFFFF {
             // Writes to High RAM (HRAM)
-            self.ram.borrow_mut().hram_write(address, data);
+            self.ram.lock().unwrap().hram_write(address, data);
         } else if address == 0xFFFF {
             // Writes to Interrupts Enable Register (IE)
             // self.cpu.borrow_mut().set_ie_register(data);

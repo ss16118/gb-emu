@@ -158,6 +158,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "acbf1af155f9b9ef647e42cdc158db4b64a1b61f743629225fde6f3e0be2a7c7"
 
 [[package]]
+name = "conrod"
+version = "0.62.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "143e0b8a955e5ddecb43191ddceb2d5793f68653d397959b75c82f0e3bfad4ba"
+
+[[package]]
 name = "core-foundation-sys"
 version = "0.8.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -207,11 +213,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3f9eec918d3f24069decb9af1554cad7c880e2da24a9afd88aca000531ab82c1"
 
 [[package]]
+name = "fragile"
+version = "2.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6c2141d6d6c8512188a7891b4b01590a45f6dac67afb4f255c4124dbb86d4eaa"
+
+[[package]]
 name = "gb-emu"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "conrod",
  "enum-map",
+ "fragile",
  "lazy_static",
  "log",
  "log4rs",

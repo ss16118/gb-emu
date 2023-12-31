@@ -1,4 +1,6 @@
 use clap::{Command, Arg};
+use std::sync::Arc;
+use std::sync::Mutex;
 use log::LevelFilter;
 use log4rs::append::console::ConsoleAppender;
 use log4rs::append::file::FileAppender;
@@ -106,7 +108,6 @@ fn main() {
     }
     // Initialize the emulator
     let mut emulator = Emulator::new(&rom_file, *enable_tracing);
-        
     // Starts the emulator
-    emulator.run(*debug);
+    Emulator::run(Arc::new(Mutex::new(emulator)), *debug);
 }

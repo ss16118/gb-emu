@@ -1,3 +1,5 @@
+use std::arch::is_aarch64_feature_detected;
+use std::thread;
 use std::{cell::RefCell, rc::Rc};
 pub mod cartridge;
 use cartridge::*;
@@ -11,6 +13,8 @@ pub mod ppu;
 use ppu::PPU;
 pub mod timer;
 use timer::Timer;
+use std::sync::Arc;
+use std::sync::Mutex;
 
 
 /**
@@ -20,14 +24,39 @@ use timer::Timer;
 pub struct Emulator {
     running: bool,
     paused: bool,
-    cartridge: Rc<RefCell<Cartridge>>,
-    cpu: Rc<RefCell<CPU>>,
-    ram: Rc<RefCell<RAM>>,
-    address_bus: Box<AddressBus>,
+    cartridge: Arc<Mutex<Cartridge>>,
+    cpu: Arc<Mutex<CPU>>,
+    ram: Arc<Mutex<RAM>>,
+    address_bus: Arc<Mutex<AddressBus>>,
     // Pixel Processing Unit
-    ppu: Box<PPU>,
-    timer: Box<Timer>,
+    ppu: Arc<Mutex<PPU>>,
+    timer: Arc<Mutex<Timer>>,
 }
+
+unsafe impl Send for Emulator {}
+
+
+fn cpu_run(arc_emulator: Arc<Mutex<Emulator>>, debug: bool) -> () {
+    log::info!("Emulator is running");
+    let mut emulator = arc_emulator.lock().unwrap();
+    emulator.running = true;
+    emulator.paused = false;
+    while emulator.running {
+        if emulator.paused {
+            std::thread::sleep(std::time::Duration::from_millis(32));
+        }
+        let mut cpu = emulator.cpu.lock().unwrap();
+        let mut bus = emulator.address_bus.lock().unwrap();
+        cpu.step(&mut bus);
+        if debug {
+            cpu.print_state("trace_file");
+        }
+        drop(cpu);
+        drop(bus);
+        emulator.tick();
+    }
+}
+
 
 /**
 * Emulator implementation
@@ -46,20 +75,20 @@ impl Emulator {
         // Loads the ROM file into the cartridge
         cartridge.load_rom_file(rom_file);
         cartridge.print_info(true);
-        let cartridge_ptr = Rc::new(RefCell::new(cartridge));
+        let cartridge_ptr = Arc::new(Mutex::new(cartridge));
 
         // CPU initialization
-        let cpu = CPU::new(trace);
-        let cpu_ptr = Rc::new(RefCell::new(cpu));
-
+        let mut cpu = CPU::new(trace);
+        
         // RAM initialization
         let ram = RAM::new();
-        let ram_ptr = Rc::new(RefCell::new(ram));
+        let ram_ptr = Arc::new(Mutex::new(ram));
 
         // Address bus initialization
         let address_bus = AddressBus::new(
-            cartridge_ptr.clone(), cpu_ptr.as_ptr(), ram_ptr.clone());
+            cartridge_ptr.clone(), &mut cpu, ram_ptr.clone());
         
+        let cpu_ptr = Arc::new(Mutex::new(cpu));
         let ppu = PPU::new();
         let timer = Timer::new();        
 
@@ -69,9 +98,9 @@ impl Emulator {
             cartridge: cartridge_ptr.clone(),
             cpu: cpu_ptr.clone(),
             ram: ram_ptr.clone(),
-            address_bus: Box::new(address_bus),
-            ppu: Box::new(ppu),
-            timer: Box::new(timer),
+            address_bus: Arc::new(Mutex::new(address_bus)),
+            ppu: Arc::new(Mutex::new(ppu)),
+            timer: Arc::new(Mutex::new(timer)),
         };
         log::info!(target: "stdout", "Initialize emulator: SUCCESS");
         return emulator;
@@ -80,30 +109,13 @@ impl Emulator {
     /**
      * Starts running the emulator
      */
-    pub fn run(&mut self, debug: bool) -> () {
-        log::info!("Emulator is running");
-        self.running = true;
-        self.paused = false;
-        while self.running {
-            if self.paused {
-               std::thread::sleep(std::time::Duration::from_millis(32));
-               continue;
-            }
+    pub fn run(arc_emulator: Arc<Mutex<Emulator>>, debug: bool) -> () {
+        let cpu_thread = thread::spawn(move || cpu_run(arc_emulator, debug));
 
-            self.cpu.borrow_mut().step(&mut self.address_bus);
-            if self.cpu.borrow().is_halted() {
-                self.paused = true;
-            }
-            
-            if debug {
-                self.cpu.borrow().print_state("trace_file");
-            }
-
-            self.tick();
-        }
+        cpu_thread.join().unwrap();
     }
 
     fn tick(&mut self) -> () {
-        self.cpu.borrow_mut().tick(1);
+        self.cpu.lock().unwrap().tick(1);
     }
 }

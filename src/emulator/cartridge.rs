@@ -4,6 +4,7 @@ use phf::{phf_map, Map};
 // A struct that defines the cartridge header
 // https://stackoverflow.com/questions/70697768/transmute-struct-into-array-in-rust
 #[repr(C)]
+#[derive(Clone, Copy)]
 struct RomHeader {
     entry_point: [u8; 4],
     nintendo_logo: [u8; 48],
@@ -258,3 +259,5 @@ impl Cartridge {
         log::info!(target: print_target, "=====================================");
     }    
 }
+
+unsafe impl Send for Cartridge {}

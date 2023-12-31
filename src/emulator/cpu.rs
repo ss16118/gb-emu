@@ -1,7 +1,12 @@
 pub mod instruction;
+use core::panic;
+
 use instruction::*;
 use crate::emulator::address_bus::AddressBus;
-use crate::emulator::Emulator;
+
+use self::interrupts::handle_interrupts;
+pub mod interrupts;
+
 
 
 const Z_FLAG: u8 = 0x80;
@@ -37,8 +42,9 @@ pub struct CPU {
     // In stepping mode
     stepping: bool,
     // Interrupt
-    interrupt_master_enable: bool,
+    interrupt_master_enabled: bool,
     enabling_ime: bool,
+    int_flags: u8,
     // Current fetch
     // Current opcode
     opcode: u8,
@@ -64,8 +70,9 @@ impl CPU {
             trace: trace,
             halted: false,
             stepping: false,
-            interrupt_master_enable: false,
+            interrupt_master_enabled: false,
             enabling_ime: false,
+            int_flags: 0,
             opcode: 0,
             fetched_data: 0,
             mem_dest: 0,
@@ -221,7 +228,7 @@ impl CPU {
      */
     fn exec_reti(&mut self, bus: &mut AddressBus) -> () {
         // Re-enables interrupts
-        self.interrupt_master_enable = true;
+        self.interrupt_master_enabled = true;
         self.exec_ret(bus);
     }
 
@@ -236,7 +243,7 @@ impl CPU {
      * Executes the DI instruction. Disables interrupts.
      */
     fn exec_di(&mut self) -> () {
-        self.interrupt_master_enable = false;
+        self.interrupt_master_enabled = false;
     }
 
     /**
@@ -942,6 +949,24 @@ impl CPU {
     }
 
     /**
+     * A private function that retrieves the value of the interrupt
+     * flags register
+     */
+    #[inline(always)]
+    pub fn get_int_flags(&self) -> u8 {
+        return self.int_flags;
+    }
+
+    /**
+     * A private function that sets the value of the interrupt
+     * flags register
+     */
+    #[inline(always)]
+    pub fn set_int_flags(&mut self, value: u8) -> () {
+        self.int_flags = value;
+    }
+
+    /**
      * A private function retrieves the value of a flag
      */
     #[inline(always)]
@@ -1304,7 +1329,6 @@ impl CPU {
             self.fetch_instruction(bus);
             // Execute
             self.fetch_data(bus);
-
             if self.trace {
                 let instr_str = unsafe { (*self.instr).str() };
                 // log::trace!(target: "trace_file", "{:<6} - 0x{:04X}: {:<10} ({:02X} {:02X} {:02X}) A:{:02X} F: {}{}{}{} BC: {:02X}{:02X} DE:{:02X}{:02X} HL: {:02X}{:02X}",
@@ -1323,13 +1347,24 @@ impl CPU {
             }
 
             self.execute(bus);
+        } else {
+            self.tick(1);
+            // If the CPU is halted
+            if self.int_flags > 0 {
+                self.halted = false;
+            }
         }
-        return true;
-    }
 
-    #[inline(always)]
-    pub fn is_halted(&self) -> bool {
-        return self.halted;
+        if self.interrupt_master_enabled {
+             handle_interrupts(self, bus);
+             self.enabling_ime = false;
+        }
+
+        if self.enabling_ime {
+            self.interrupt_master_enabled = true;
+        }
+
+        return true;
     }
 
     /**
@@ -1357,5 +1392,12 @@ impl CPU {
             if self.get_flag(N_FLAG) { 'N' } else { '-' },
             if self.get_flag(H_FLAG) { 'H' } else { '-' },
             if self.get_flag(C_FLAG) { 'C' } else { '-' });
+    }
+}
+
+
+impl Drop for CPU {
+    fn drop(&mut self) {
+        log::info!("CPU destroyed");
     }
 }

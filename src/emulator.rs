@@ -1,7 +1,7 @@
-use std::arch::is_aarch64_feature_detected;
 use std::thread;
-use std::{cell::RefCell, rc::Rc};
 pub mod cartridge;
+pub mod io;
+pub mod dbg;
 use cartridge::*;
 pub mod cpu;
 use cpu::CPU;
@@ -13,6 +13,8 @@ pub mod ppu;
 use ppu::PPU;
 pub mod timer;
 use timer::Timer;
+pub mod ui;
+use ui::UI;
 use std::sync::Arc;
 use std::sync::Mutex;
 
@@ -111,6 +113,9 @@ impl Emulator {
      */
     pub fn run(arc_emulator: Arc<Mutex<Emulator>>, debug: bool) -> () {
         let cpu_thread = thread::spawn(move || cpu_run(arc_emulator, debug));
+        let mut ui = UI::new();
+
+        ui.handle_events();
 
         cpu_thread.join().unwrap();
     }

@@ -1,10 +1,10 @@
 pub mod instruction;
-use core::panic;
 
 use instruction::*;
 use crate::emulator::address_bus::AddressBus;
-
+use crate::emulator::dbg::*;
 use self::interrupts::handle_interrupts;
+
 pub mod interrupts;
 
 
@@ -644,27 +644,31 @@ impl CPU {
      * Adjusts register A to contain a binary coded decimal.
      */
     fn exec_daa(&mut self) -> () {
-        let mut val: u8 = 0;
-        let mut new_c_flag: i8 = 0;
-
-        let mut c_flag = self.get_flag(C_FLAG);
-        let mut h_flag = self.get_flag(H_FLAG);
-        let mut n_flag = self.get_flag(N_FLAG);
-
-        if h_flag || (!h_flag && (val & 0x0F) > 9) {
-            val += 6;
-        }
-
-        if c_flag || (!c_flag && val > 0x99) {
-            val |= 0x60;
-            new_c_flag = 1;
-        }
+        let c_flag = self.get_flag(C_FLAG);
+        let h_flag = self.get_flag(H_FLAG);
+        let n_flag = self.get_flag(N_FLAG);
 
         let a_val = self.read_reg(&RegType::RT_A);
 
-        let new_val = a_val.wrapping_add_signed(if n_flag { -(val as i16) } else { val as i16 });
+        let mut adjust = if c_flag { 0x60 } else { 0 };
+        if h_flag {
+            adjust |= 0x6;
+        }
+        let new_val: u16;
+        if !n_flag {
+            if (a_val & 0x0F) > 0x09 {
+                adjust |= 0x06;
+            }
+            if a_val > 0x99 {
+                adjust |= 0x60;
+            }
+            new_val = a_val.wrapping_add(adjust);
+        } else {
+            new_val = a_val.wrapping_sub(adjust);
+        }
+
         self.set_register(&RegType::RT_A, new_val);
-        self.set_flags((new_val == 0) as i8, -1, 0, new_c_flag);
+        self.set_flags((new_val == 0) as i8, -1, 0, (adjust >= 0x60) as i8);
     }
 
     /**
@@ -1330,9 +1334,9 @@ impl CPU {
             // Execute
             self.fetch_data(bus);
             if self.trace {
-                let instr_str = unsafe { (*self.instr).str() };
-                // log::trace!(target: "trace_file", "{:<6} - 0x{:04X}: {:<10} ({:02X} {:02X} {:02X}) A:{:02X} F: {}{}{}{} BC: {:02X}{:02X} DE:{:02X}{:02X} HL: {:02X}{:02X}",
-                println!("{:<6} - 0x{:04X}: {:<10} ({:02X} {:02X} {:02X}) A:{:02X} F: {}{}{}{} BC: {:02X}{:02X} DE:{:02X}{:02X} HL: {:02X}{:02X}",
+                let instr_str = unsafe { (*self.instr).disass(self) };
+                // log::trace!(target: "trace_file", "{:<6} - 0x{:04X}: {:<12} ({:02X} {:02X} {:02X}) A:{:02X} F: {}{}{}{} BC: {:02X}{:02X} DE:{:02X}{:02X} HL: {:02X}{:02X}",
+                println!("{:<6} - 0x{:04X}: {:<12} ({:02X} {:02X} {:02X}) A:{:02X} F: {}{}{}{} BC: {:02X}{:02X} DE:{:02X}{:02X} HL: {:02X}{:02X}",
                             self.ticks, pc, instr_str, 
                             self.opcode, bus.read(pc + 1), bus.read(pc + 2),
                             self.registers.a,
@@ -1345,6 +1349,9 @@ impl CPU {
                             self.registers.h, self.registers.l
                         );
             }
+
+            dbg_update(bus);
+            dbg_print();
 
             self.execute(bus);
         } else {
@@ -1392,12 +1399,5 @@ impl CPU {
             if self.get_flag(N_FLAG) { 'N' } else { '-' },
             if self.get_flag(H_FLAG) { 'H' } else { '-' },
             if self.get_flag(C_FLAG) { 'C' } else { '-' });
-    }
-}
-
-
-impl Drop for CPU {
-    fn drop(&mut self) {
-        log::info!("CPU destroyed");
     }
 }

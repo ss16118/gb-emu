@@ -1,9 +1,8 @@
-use std::sync::{Arc, Mutex};
-use std::{cell::RefCell, rc::Rc};
-use crate::emulator::cartridge::Cartridge;
+use std::sync::{Arc, Mutex};use crate::emulator::cartridge::Cartridge;
 use crate::emulator::cpu::CPU;
 use crate::emulator::ram::RAM;
-use super::cartridge;
+use crate::emulator::io::{io_read, io_write};
+// use crate::emulator::io::io_read;
 /**
  * A struct that defines the address bus
  */
@@ -79,8 +78,7 @@ impl AddressBus {
             return 0;
         } else if address < 0xFF80 {
             // Reads from I/O Registers
-            log::error!("Reading from I/O Registers currently not supported");
-            return 0;
+            return io_read(address);
         } else if address < 0xFFFF {
             // Reads from High RAM (HRAM)
             return self.ram.lock().unwrap().hram_read(address);
@@ -122,7 +120,7 @@ impl AddressBus {
             return;
         } else if address < 0xFF80 {
             // Writes to I/O Registers
-            log::error!("Writing to I/O Registers currently not supported {:04X}", address);
+            io_write(address, data);
             // std::process::exit(-5);
         } else if address < 0xFFFF {
             // Writes to High RAM (HRAM)

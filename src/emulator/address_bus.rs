@@ -64,7 +64,8 @@ impl AddressBus {
             return 0;
         } else if address < 0xC000 {
             // Reads from Cartridge RAM
-            self.cartridge.lock().unwrap().read(address);
+            // return self.cartridge.lock().unwrap().read(address);
+            return 0;
         } else if address < 0xE000 {
             // Reads from Work RAM (WRAM)
             return self.ram.lock().unwrap().wram_read(address);
@@ -114,7 +115,7 @@ impl AddressBus {
         } else if address < 0xFEA0 {
             // Writes to Object Attribute Memory (OAM)
             log::error!("Writing to Object Attribute Memory (OAM) currently not supported");
-            std::process::exit(-5);
+            // std::process::exit(-5);
         } else if address < 0xFF00 {
             // Writes to reserved memory (UNUSABLE)
             return;

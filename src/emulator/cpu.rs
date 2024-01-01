@@ -82,9 +82,9 @@ impl CPU {
             ie_register: 0,
             // Initializes PC to the entry point
             registers: Registers {
-                a: 0, f: 0, b: 0, c: 0,
-                d: 0, e: 0, h: 0, l: 0,
-                pc: 0x100, sp: 0
+                a: 0x01, f: 0xB0, b: 0x00, c: 0x13,
+                d: 0x00, e: 0xD8, h: 0x01, l: 0x4D,
+                pc: 0x100, sp: 0xFFFE
             },            
         };
         log::info!(target: "stdout", "Initializing CPU: SUCCESS");
@@ -355,7 +355,7 @@ impl CPU {
      */
     fn exec_add(&mut self) -> () {        
         let mut val: u32 = 
-            (unsafe { self.read_reg(&(*self.instr).reg1) } + self.fetched_data) as u32;
+            (unsafe { self.read_reg(&(*self.instr).reg1) }).wrapping_add(self.fetched_data) as u32;
 
         let is_16_bit = unsafe { (*self.instr).reg1.is_16_bit() };
         if is_16_bit {
@@ -399,10 +399,8 @@ impl CPU {
                     (self.fetched_data & 0xFF)) >= 0x100) as i8;
             }
 
-
             self.set_register(&(*self.instr).reg1, (val & 0xFFFF) as u16);
             self.set_flags(z_flag, 0, h_flag, c_flag);
-
         }
     }
 
@@ -412,15 +410,15 @@ impl CPU {
      */
     fn exec_adc(&mut self) -> () {
         unsafe {
-            let op1 = self.read_reg(&(*self.instr).reg1);
-            let op2 = self.fetched_data;
+            let op1 = self.fetched_data;
+            let op2 = self.read_reg(&(*self.instr).reg1);
             let c_flag = self.get_flag(C_FLAG) as u16;
-            let val: u16 = ((op1 + op2 + c_flag) & 0xFF) as u16;
+            let val: u16 = ((op1.wrapping_add(op2).wrapping_add(c_flag)) & 0xFF) as u16;
             self.set_register(&(*self.instr).reg1, val);
 
-
-            let h_flag = (op1 & 0x0F + op2 & 0x0F + c_flag) > 0x0F;
-            self.set_flags((val == 0) as i8, 0, h_flag as i8, (val > 0xFF) as i8);
+            let h_flag = (op1 & 0x0F) as u32 + (op2 & 0x0F) as u32 + (c_flag as u32) > 0xF;
+            let c_flag = (op1 as u32).wrapping_add(op2 as u32).wrapping_add(c_flag as u32) > 0xFF;
+            self.set_flags((val == 0) as i8, 0, h_flag as i8, c_flag as i8);
         }
     }
 
@@ -441,19 +439,20 @@ impl CPU {
 
     /**
      * Executes the SBC instruction
+     * Subtract with Carry
      */
     fn exec_sbc(&mut self) -> () {
         let c_val = self.get_flag(C_FLAG) as u8;
         let op1 = unsafe { self.read_reg(&(*self.instr).reg1) };
-        let val = self.fetched_data - (c_val as u16);
+        let val = self.fetched_data + (c_val as u16);
         
-        let z_flag = ((op1 - val) == 0) as i8;
-        let h_flag = (((op1 as i32 & 0x0F) - (self.fetched_data as i32 & 0x0F) -
+        let z_flag = ((op1.wrapping_sub(val) as u8) == 0) as i8;
+        let h_flag = (((op1 as i32 & 0x0F).wrapping_sub(self.fetched_data as i32 & 0x0F) -
                 (c_val as i32)) < 0) as i8;
-        let c_flag = (((op1 as i32) - (self.fetched_data as i32) -
+        let c_flag = (((op1 as i32).wrapping_sub(self.fetched_data as i32) -
                 (c_val as i32)) < 0) as i8;
         
-        unsafe { self.set_register(&(*self.instr).reg1, op1 - val) };
+        unsafe { self.set_register(&(*self.instr).reg1, op1.wrapping_sub(val)) };
         self.set_flags(z_flag, 1, h_flag, c_flag);
     }
 
@@ -668,7 +667,7 @@ impl CPU {
         }
 
         self.set_register(&RegType::RT_A, new_val);
-        self.set_flags((new_val == 0) as i8, -1, 0, (adjust >= 0x60) as i8);
+        self.set_flags((new_val as u8 == 0) as i8, -1, 0, (adjust >= 0x60) as i8);
     }
 
     /**
@@ -1336,8 +1335,9 @@ impl CPU {
             if self.trace {
                 let instr_str = unsafe { (*self.instr).disass(self) };
                 // log::trace!(target: "trace_file", "{:<6} - 0x{:04X}: {:<12} ({:02X} {:02X} {:02X}) A:{:02X} F: {}{}{}{} BC: {:02X}{:02X} DE:{:02X}{:02X} HL: {:02X}{:02X}",
-                println!("{:<6} - 0x{:04X}: {:<12} ({:02X} {:02X} {:02X}) A:{:02X} F: {}{}{}{} BC: {:02X}{:02X} DE:{:02X}{:02X} HL: {:02X}{:02X}",
-                            self.ticks, pc, instr_str, 
+                log::trace!(target: "trace_file", "0x{:04X}: {:<12} ({:02X} {:02X} {:02X}) A: {:02X} F: {}{}{}{} BC: {:02X}{:02X} DE: {:02X}{:02X} HL: {:02X}{:02X}",
+                // println!("{:<6} - 0x{:04X}: {:<12} ({:02X} {:02X} {:02X}) A:{:02X} F: {}{}{}{} BC: {:02X}{:02X} DE:{:02X}{:02X} HL: {:02X}{:02X}",
+                            pc, instr_str,
                             self.opcode, bus.read(pc + 1), bus.read(pc + 2),
                             self.registers.a,
                             if self.get_flag(Z_FLAG) { 'Z' } else { '-' },

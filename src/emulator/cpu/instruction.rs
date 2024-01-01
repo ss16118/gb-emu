@@ -280,7 +280,7 @@ impl Instruction {
                 result.push_str(&format!("{}", self.reg1.str()));
             },
             AddrMode::AM_R_D8 |AddrMode::AM_R_A8 => {
-                result.push_str(&format!("{},${:02X}", self.reg1.str(), cpu.fetched_data));
+                result.push_str(&format!("{},${:02X}", self.reg1.str(), cpu.fetched_data & 0xFF));
             },
             AddrMode::AM_R_MR => {
                 result.push_str(&format!("{},({})", self.reg1.str(), self.reg2.str()));
@@ -292,13 +292,13 @@ impl Instruction {
                 result.push_str(&format!("{},(HL-)", self.reg1.str()));
             },
             AddrMode::AM_HLI_R => {
-                result.push_str(&format!("(HL+),{}", self.reg1.str()));
+                result.push_str(&format!("(HL+),{}", self.reg2.str()));
             },
             AddrMode::AM_HLD_R => {
-                result.push_str(&format!("(HL-),{}", self.reg1.str()));
+                result.push_str(&format!("(HL-),{}", self.reg2.str()));
             },
             AddrMode::AM_A8_R => {
-                result.push_str(&format!("${:02X},{}", cpu.fetched_data, self.reg2.str()));
+                result.push_str(&format!("${:02X},{}", (cpu.mem_dest & 0xFF) as u8, self.reg2.str()));
             },
             AddrMode::AM_HL_SPR => {
                 result.push_str(&format!("(HL),SP+{}", cpu.fetched_data & 0xFF));
@@ -310,7 +310,7 @@ impl Instruction {
                 result.push_str(&format!("${:02X}", cpu.fetched_data));
             }
             AddrMode::AM_D16_R | AddrMode::AM_A16_R => {
-                result.push_str(&format!("${:04X},{}", cpu.fetched_data, self.reg2.str()));
+                result.push_str(&format!("(${:04X}),{}", cpu.fetched_data, self.reg2.str()));
             },
             AddrMode::AM_MR_D8 => {
                 result.push_str(&format!("({}),${:02X}", self.reg1.str(), cpu.fetched_data));
@@ -348,7 +348,7 @@ pub static INSTRUCTIONS: Map<u8, Instruction> = phf_map! {
     0x06_u8 => Instruction::with_one_reg(InstrType::IN_LD, AddrMode::AM_R_D8, RegType::RT_B),
     0x07_u8 => Instruction::default(InstrType::IN_RLCA, AddrMode::AM_IMP),
     0x08_u8 => Instruction::with_two_regs(InstrType::IN_LD, AddrMode::AM_A16_R,
-        RegType::RT_NONE, RegType::RT_HL),
+        RegType::RT_NONE, RegType::RT_SP),
     0x09_u8 => Instruction::with_two_regs(InstrType::IN_ADD, AddrMode::AM_R_R,
         RegType::RT_HL, RegType::RT_BC),
     0x0A_u8 => Instruction::with_two_regs(InstrType::IN_LD, AddrMode::AM_R_MR,
@@ -411,7 +411,7 @@ pub static INSTRUCTIONS: Map<u8, Instruction> = phf_map! {
     0x33_u8 => Instruction::with_one_reg(InstrType::IN_INC, AddrMode::AM_R, RegType::RT_SP),
     0x34_u8 => Instruction::with_one_reg(InstrType::IN_INC, AddrMode::AM_MR, RegType::RT_HL),
     0x35_u8 => Instruction::with_one_reg(InstrType::IN_DEC, AddrMode::AM_MR, RegType::RT_HL),
-    0x36_u8 => Instruction::with_one_reg(InstrType::IN_LD, AddrMode::AM_R_D8, RegType::RT_HL),
+    0x36_u8 => Instruction::with_one_reg(InstrType::IN_LD, AddrMode::AM_MR_D8, RegType::RT_HL),
     0x37_u8 => Instruction::default(InstrType::IN_SCF, AddrMode::AM_IMP),
     0x38_u8 => Instruction::new(InstrType::IN_JR, AddrMode::AM_D8,
         RegType::RT_NONE, RegType::RT_NONE, CondType::CT_C, 0),
@@ -714,7 +714,7 @@ pub static INSTRUCTIONS: Map<u8, Instruction> = phf_map! {
     0xC9_u8 => Instruction::default(InstrType::IN_RET, AddrMode::AM_IMP),
     0xCA_u8 => Instruction::new(InstrType::IN_JP, AddrMode::AM_D16,
         RegType::RT_NONE, RegType::RT_NONE, CondType::CT_Z, 0),
-    0xCC_u8 => Instruction::new(InstrType::IN_CALL, AddrMode::AM_D16_R,
+    0xCC_u8 => Instruction::new(InstrType::IN_CALL, AddrMode::AM_D16,
         RegType::RT_NONE, RegType::RT_NONE, CondType::CT_Z, 0),
     0xCB_u8 => Instruction::default(InstrType::IN_CB, AddrMode::AM_D8),
     0xCD_u8 => Instruction::default(InstrType::IN_CALL, AddrMode::AM_D16),
@@ -728,7 +728,7 @@ pub static INSTRUCTIONS: Map<u8, Instruction> = phf_map! {
     0xD1_u8 => Instruction::with_one_reg(InstrType::IN_POP, AddrMode::AM_R, RegType::RT_DE),
     0xD2_u8 => Instruction::new(InstrType::IN_JP, AddrMode::AM_D16,
         RegType::RT_NONE, RegType::RT_NONE, CondType::CT_NC, 0),
-    0xD4_u8 => Instruction::new(InstrType::IN_CALL, AddrMode::AM_D16_R,
+    0xD4_u8 => Instruction::new(InstrType::IN_CALL, AddrMode::AM_D16,
         RegType::RT_NONE, RegType::RT_NONE, CondType::CT_NC, 0),
     0xD5_u8 => Instruction::with_one_reg(InstrType::IN_PUSH, AddrMode::AM_R, RegType::RT_DE),
     0xD6_u8 => Instruction::with_one_reg(InstrType::IN_SUB, AddrMode::AM_R_D8, RegType::RT_A),
@@ -739,7 +739,7 @@ pub static INSTRUCTIONS: Map<u8, Instruction> = phf_map! {
     0xD9_u8 => Instruction::default(InstrType::IN_RETI, AddrMode::AM_IMP),
     0xDA_u8 => Instruction::new(InstrType::IN_JP, AddrMode::AM_D16,
         RegType::RT_NONE, RegType::RT_NONE, CondType::CT_C, 0),
-    0xDC_u8 => Instruction::new(InstrType::IN_CALL, AddrMode::AM_D16_R,
+    0xDC_u8 => Instruction::new(InstrType::IN_CALL, AddrMode::AM_D16,
         RegType::RT_NONE, RegType::RT_NONE, CondType::CT_C, 0),
     0xDE_u8 => Instruction::with_one_reg(InstrType::IN_SBC, AddrMode::AM_R_D8, RegType::RT_A),
     0xDF_u8 => Instruction::new(InstrType::IN_RST, AddrMode::AM_IMP,
@@ -778,8 +778,8 @@ pub static INSTRUCTIONS: Map<u8, Instruction> = phf_map! {
         RegType::RT_HL, RegType::RT_SP),
     0xF9_u8 => Instruction::with_two_regs(InstrType::IN_LD, AddrMode::AM_R_R,
         RegType::RT_SP, RegType::RT_HL),
-    0xFA_u8 => Instruction::with_two_regs(InstrType::IN_LD, AddrMode::AM_R_A16,
-        RegType::RT_A, RegType::RT_NONE),
+    0xFA_u8 => Instruction::with_one_reg(InstrType::IN_LD, AddrMode::AM_R_A16,
+        RegType::RT_A),
     0xFB_u8 => Instruction::default(InstrType::IN_EI, AddrMode::AM_IMP),
     0xFE_u8 => Instruction::with_one_reg(InstrType::IN_CP, AddrMode::AM_R_D8, RegType::RT_A),
     0xFF_u8 => Instruction::new(InstrType::IN_RST, AddrMode::AM_IMP,

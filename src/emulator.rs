@@ -2,6 +2,8 @@ use std::thread;
 pub mod cartridge;
 pub mod io;
 pub mod dbg;
+pub mod dma;
+use dma::DMA;
 use cartridge::*;
 pub mod cpu;
 use cpu::CPU;
@@ -33,12 +35,13 @@ pub struct Emulator {
     // Pixel Processing Unit
     ppu: Arc<Mutex<PPU>>,
     timer: Arc<Mutex<Timer>>,
+    dma: Arc<Mutex<DMA>>,
 }
 
 unsafe impl Send for Emulator {}
 
 
-fn cpu_run(arc_emulator: Arc<Mutex<Emulator>>, debug: bool) -> () {
+fn cpu_run(arc_emulator: &Arc<Mutex<Emulator>>, debug: bool) -> () {
     log::info!("Emulator is running");
     let mut emulator = arc_emulator.lock().unwrap();
     emulator.running = true;
@@ -84,17 +87,24 @@ impl Emulator {
         let timer_ptr = Arc::new(Mutex::new(timer));
 
         // CPU initialization
-        let mut cpu = CPU::new(trace, timer_ptr.clone());
+        let cpu = CPU::new(trace, timer_ptr.clone());
         
         // RAM initialization
         let ram = RAM::new();
         let ram_ptr = Arc::new(Mutex::new(ram));
 
+        // PPU initialization
         let ppu = PPU::new();
+        let ppu_ptr = Arc::new(Mutex::new(ppu));
+
+        // DMA initialization
+        let dma = DMA::new();
+        let dma_ptr = Arc::new(Mutex::new(dma));
 
         // Address bus initialization
         let address_bus = AddressBus::new(
-            cartridge_ptr.clone(), ram_ptr.clone(), timer_ptr.clone());
+            cartridge_ptr.clone(), ram_ptr.clone(),
+            timer_ptr.clone(), ppu_ptr.clone());
         
         let cpu_ptr = Arc::new(Mutex::new(cpu));
 
@@ -105,8 +115,9 @@ impl Emulator {
             cpu: cpu_ptr.clone(),
             ram: ram_ptr.clone(),
             address_bus: Arc::new(Mutex::new(address_bus)),
-            ppu: Arc::new(Mutex::new(ppu)),
+            ppu: ppu_ptr.clone(),
             timer: timer_ptr.clone(),
+            dma: dma_ptr.clone(),
         };
         log::info!(target: "stdout", "Initialize emulator: SUCCESS");
         return emulator;
@@ -116,10 +127,11 @@ impl Emulator {
      * Starts running the emulator
      */
     pub fn run(arc_emulator: Arc<Mutex<Emulator>>, debug: bool) -> () {
-        let cpu_thread = 
-            thread::spawn(move || cpu_run(arc_emulator, debug));
         let mut ui = UI::new();
-        ui.handle_events();
+        ui.run(&arc_emulator);
+
+        let cpu_thread = 
+            thread::spawn(move || cpu_run(&arc_emulator, debug));
 
         cpu_thread.join().unwrap();
     }

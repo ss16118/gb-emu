@@ -10,6 +10,7 @@ const JOYPAD_ADDR: u16 = 0x60;
 
 
 #[allow(non_camel_case_types)]
+#[derive(Debug)]
 pub enum InterruptType {
     IT_VBLANK = 0x1,
     IT_LCD_STAT = 0x2,
@@ -60,5 +61,6 @@ pub fn handle_interrupts(cpu: &mut CPU, bus: &mut AddressBus) -> () {
 
 
 pub fn request_interrupt(cpu: *mut CPU, interrupt_type: InterruptType) -> () {
+    log::info!(target: "trace_file", "Interrupt requested: {:?}", interrupt_type);
     unsafe { (*cpu).int_flags |= interrupt_type as u8; }
 }

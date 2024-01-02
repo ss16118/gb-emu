@@ -50,19 +50,19 @@ impl Timer {
         match self.tac & 0b11 {
             0x00 => {
                 timer_update = ((prev_div & (1 << 9)) != 0) && 
-                               ((!(self.div.load(DEFAULT_ORDER) & (1 << 9))) != 0);
+                               ((self.div.load(DEFAULT_ORDER) & (1 << 9)) == 0);
             },
             0x01 => {
                 timer_update = ((prev_div & (1 << 3)) != 0) && 
-                               ((!(self.div.load(DEFAULT_ORDER) & (1 << 3))) != 0);
+                               ((self.div.load(DEFAULT_ORDER) & (1 << 3)) == 0);
             }
             0x02 => {
                 timer_update = ((prev_div & (1 << 5)) != 0) && 
-                               ((!(self.div.load(DEFAULT_ORDER) & (1 << 5))) != 0);
+                               ((self.div.load(DEFAULT_ORDER) & (1 << 5)) == 0);
             }
             0x03 => {
                 timer_update = ((prev_div & (1 << 7)) != 0) && 
-                               ((!(self.div.load(DEFAULT_ORDER) & (1 << 7))) != 0);
+                               ((self.div.load(DEFAULT_ORDER) & (1 << 7)) == 0);
             }
             _ => (),
         }

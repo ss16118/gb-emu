@@ -83,9 +83,7 @@ impl AddressBus {
             return 0;
         } else if address < 0xFF80 {
             // Reads from I/O Registers
-            return unsafe {
-                io_read(address,  &*self.timer.lock().unwrap(), cpu)
-            };
+            return io_read(address,  &*self.timer.lock().unwrap(), cpu);
         } else if address < 0xFFFF {
             // Reads from High RAM (HRAM)
             return self.ram.lock().unwrap().hram_read(address);

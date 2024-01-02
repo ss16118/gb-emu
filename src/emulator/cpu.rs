@@ -165,8 +165,9 @@ impl CPU {
     fn exec_ldh(&mut self, bus: &mut AddressBus) -> () {
         if unsafe { (*self.instr).reg1 == RegType::RT_A } {
             // LDH A, (a8)
-            let addr = bus.read(self, self.fetched_data | 0xFF00) as u16;
-            self.set_register(&RegType::RT_A, addr);
+            let addr = self.fetched_data | 0xFF00;
+            let val: u16 = bus.read(self, addr) as u16;
+            self.set_register(&RegType::RT_A, val);
         } else {
             // LDH (a8), A
             bus.write(self, self.mem_dest, self.read_reg(&RegType::RT_A) as u8);
@@ -1374,6 +1375,7 @@ impl CPU {
             dbg_print();
 
             self.execute(bus);
+            log::info!(target: "trace_file", "[DEBUG] Int flag value (FF0F): {:02X}", bus.read(self, 0xFF0F));
         } else {
             self.cycles(1);
             // If the CPU is halted

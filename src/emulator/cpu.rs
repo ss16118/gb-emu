@@ -1,9 +1,13 @@
+use std::ptr;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 pub mod instruction;
 
 use instruction::*;
+use crate::emulator::timer::*;
 use crate::emulator::address_bus::AddressBus;
 use crate::emulator::dbg::*;
-use self::interrupts::handle_interrupts;
+use self::interrupts::{handle_interrupts, request_interrupt, InterruptType};
 
 pub mod interrupts;
 
@@ -13,6 +17,8 @@ const Z_FLAG: u8 = 0x80;
 const N_FLAG: u8 = 0x40;
 const H_FLAG: u8 = 0x20;
 const C_FLAG: u8 = 0x10;
+
+pub const INT_FLAGS_ADDR: u16 = 0xFF0F;
 
 struct Registers {
     /* 8-bit Registers */
@@ -35,7 +41,7 @@ struct Registers {
  * https://www.youtube.com/watch?v=17cdj-HYpb0&list=PLVxiWMqQvhg_yk4qy2cSC3457wZJga_e5&index=3
  */
 pub struct CPU {
-    pub ticks: u32,
+    ticks: AtomicU64,
     // In trace mode
     trace: bool,
     halted: bool,
@@ -44,7 +50,7 @@ pub struct CPU {
     // Interrupt
     interrupt_master_enabled: bool,
     enabling_ime: bool,
-    int_flags: u8,
+    pub int_flags: u8,
     // Current fetch
     // Current opcode
     opcode: u8,
@@ -56,20 +62,22 @@ pub struct CPU {
     /* Interrupt enable register */
     ie_register: u8,
     registers: Registers,
+    timer: Arc<Mutex<Timer>>
 }
 
 impl CPU {
     /**
      * Creates a new CPU instance
      */
-    pub fn new(trace: bool) -> CPU {
+    pub fn new(trace: bool, timer: Arc<Mutex<Timer>>) -> CPU {
+       
         log::info!("Initializing CPU...");
 
         let cpu = CPU {
-            ticks: 0,
             trace: trace,
             halted: false,
             stepping: false,
+            ticks: AtomicU64::new(0),
             interrupt_master_enabled: false,
             enabling_ime: false,
             int_flags: 0,
@@ -85,12 +93,12 @@ impl CPU {
                 a: 0x01, f: 0xB0, b: 0x00, c: 0x13,
                 d: 0x00, e: 0xD8, h: 0x01, l: 0x4D,
                 pc: 0x100, sp: 0xFFFE
-            },            
+            },
+            timer: timer
         };
         log::info!(target: "stdout", "Initializing CPU: SUCCESS");
         return cpu;
     }
-
 
     /*****************************************
      * Functions that process instructions
@@ -111,12 +119,12 @@ impl CPU {
             // to the memory location specified by mem_dest
             if unsafe { (*self.instr).reg2.is_16_bit()  } {
                 // Writes 16-bit value to memory
-                bus.write_16(self.mem_dest, self.fetched_data);
+                bus.write_16(self, self.mem_dest, self.fetched_data);
             } else {
                 // Writes 8-bit value to memory
-                bus.write(self.mem_dest, self.fetched_data as u8);
+                bus.write(self, self.mem_dest, self.fetched_data as u8);
             }
-            self.tick(1);
+            self.cycles(1);
             return;
         }
 
@@ -137,7 +145,7 @@ impl CPU {
             
             self.set_flags(0, 0, h_flag as i8, c_flag as i8);
             let res: u16 = 
-                self.read_reg(&RegType::RT_SP).checked_add_signed(self.fetched_data as i16).unwrap();
+                self.read_reg(&RegType::RT_SP).wrapping_add_signed((self.fetched_data as i8) as i16);
             
             self.set_register(&RegType::RT_HL, res);
             return;
@@ -157,13 +165,13 @@ impl CPU {
     fn exec_ldh(&mut self, bus: &mut AddressBus) -> () {
         if unsafe { (*self.instr).reg1 == RegType::RT_A } {
             // LDH A, (a8)
-            let addr = bus.read(self.fetched_data | 0xFF00) as u16;
+            let addr = bus.read(self, self.fetched_data | 0xFF00) as u16;
             self.set_register(&RegType::RT_A, addr);
         } else {
             // LDH (a8), A
-            bus.write(self.mem_dest, self.read_reg(&RegType::RT_A) as u8);
+            bus.write(self, self.mem_dest, self.read_reg(&RegType::RT_A) as u8);
         }
-        self.tick(1);
+        self.cycles(1);
     }
 
     /**
@@ -177,10 +185,10 @@ impl CPU {
         if self.check_cond() {
             if push_pc {
                 self.stack_push16(bus, self.read_reg(&RegType::RT_PC));
-                self.tick(2);
+                self.cycles(2);
             }
             self.set_register(&RegType::RT_PC, address);
-            self.tick(1);
+            self.cycles(1);
         }
     }
 
@@ -213,13 +221,13 @@ impl CPU {
      */
     fn exec_ret(&mut self, bus: &mut AddressBus) -> () {
         if unsafe { (*self.instr).cond_type != CondType::CT_NONE } {
-            self.tick(1);
+            self.cycles(1);
         }
         if self.check_cond() {
             let addr = self.stack_pop16(bus);
-            self.tick(2);
+            self.cycles(2);
             self.set_register(&RegType::RT_PC, addr);
-            self.tick(1);
+            self.cycles(1);
         }
     }
     
@@ -298,13 +306,13 @@ impl CPU {
         let mut val = self.fetched_data.wrapping_add(1);
 
         if unsafe { (*self.instr).reg1.is_16_bit() } {
-            self.tick(1);
+            self.cycles(1);
         }
 
         if unsafe { (*self.instr).reg1 == RegType::RT_HL && self.dest_is_mem } {
             // Special case: INC (HL)
             val &= 0xFF;
-            bus.write(self.mem_dest, val as u8);
+            bus.write(self, self.mem_dest, val as u8);
         } else {
             // Normal case
             unsafe {
@@ -327,12 +335,12 @@ impl CPU {
         let mut val = self.fetched_data.wrapping_sub(1);
 
         if unsafe { (*self.instr).reg1.is_16_bit() } {
-            self.tick(1);
+            self.cycles(1);
         }
 
         if unsafe { (*self.instr).reg1 == RegType::RT_HL && self.dest_is_mem } {
             // Special case: DEC (HL)
-            bus.write(self.mem_dest, val as u8);
+            bus.write(self, self.mem_dest, val as u8);
         } else {
             // Normal case
             unsafe {
@@ -359,7 +367,7 @@ impl CPU {
 
         let is_16_bit = unsafe { (*self.instr).reg1.is_16_bit() };
         if is_16_bit {
-            self.tick(1);
+            self.cycles(1);
         }
 
         if unsafe { (*self.instr).reg1 == RegType::RT_SP } {
@@ -461,7 +469,7 @@ impl CPU {
      */
     fn exec_pop(&mut self, bus: &mut AddressBus) -> () {
         let value = self.stack_pop16(bus);
-        self.tick(2);
+        self.cycles(2);
 
         unsafe {
             assert! ((*self.instr).reg1.is_16_bit());
@@ -483,11 +491,11 @@ impl CPU {
         let lo = (self.fetched_data & 0x00FF) as u8;
 
         self.stack_push(bus, hi);
-        self.tick(1);
+        self.cycles(1);
         self.stack_push(bus, lo);
-        self.tick(1);
+        self.cycles(1);
 
-        self.tick(1);
+        self.cycles(1);
     }
 
     fn exec_cb(&mut self, bus: &mut AddressBus) -> () {
@@ -500,11 +508,11 @@ impl CPU {
         let bit_op = (cb_opcode >> 6) & 0b11;
         let reg_val = self.read_cb_reg(reg, bus);
 
-        self.tick(1);
+        self.cycles(1);
 
 
         if *reg == RegType::RT_HL {
-            self.tick(2);
+            self.cycles(2);
         }
 
         match bit_op {
@@ -560,7 +568,7 @@ impl CPU {
                         new_val |= c_flag;
 
                         self.set_cb_reg(reg, new_val, bus);
-                        self.set_flags((new_val == 0) as i8, 0, 0, (reg_val & 0x80) as i8);
+                        self.set_flags((new_val == 0) as i8, 0, 0, (reg_val & 0x80 != 0) as i8);
                     },
                     3 => {
                         // RR
@@ -577,7 +585,7 @@ impl CPU {
                         let new_val = reg_val << 1;
 
                         self.set_cb_reg(reg, new_val, bus);
-                        self.set_flags((new_val == 0) as i8, 0, 0, (reg_val & 0x80) as i8);
+                        self.set_flags((new_val == 0) as i8, 0, 0, (reg_val & 0x80 != 0) as i8);
                     },
                     5 => {
                         // SRA
@@ -677,9 +685,9 @@ impl CPU {
     fn exec_rlca(&mut self) -> () {
         let mut val = self.read_reg(&RegType::RT_A);
         let c_flag = (val >> 7) & 1;
-        val = (val << 1) | c_flag;
+        val = val.wrapping_shl(1) | c_flag;
         self.set_register(&RegType::RT_A, val);
-        self.set_flags((val == 0) as i8, 0, 0, c_flag as i8);
+        self.set_flags(0, 0, 0, c_flag as i8);
     }
 
     /**
@@ -700,10 +708,11 @@ impl CPU {
      */
     fn exec_rla(&mut self) -> () {
         let mut val = self.read_reg(&RegType::RT_A);
+        let new_c_flag = (val as u8 >> 7) & 1;
         let c_flag = self.get_flag(C_FLAG) as u16;
-        val = (val << 1) | c_flag;
+        val = val.wrapping_shl(1) | c_flag;
         self.set_register(&RegType::RT_A, val);
-        self.set_flags(0, 0, 0, (val >> 7) as i8);
+        self.set_flags(0, 0, 0, new_c_flag as i8);
     }
 
     /**
@@ -760,7 +769,7 @@ impl CPU {
         let mut sp_val = self.read_reg(&RegType::RT_SP);
         self.set_register(&RegType::RT_SP, sp_val - 1);
         sp_val = self.read_reg(&RegType::RT_SP);
-        bus.write(sp_val, data);
+        bus.write(self, sp_val, data);
     }
 
     /**
@@ -778,7 +787,7 @@ impl CPU {
      */
     fn stack_pop(&mut self, bus: &mut AddressBus) -> u8 {
         let sp_val = self.read_reg(&RegType::RT_SP);
-        let data = bus.read(sp_val);
+        let data = bus.read(self, sp_val);
         self.set_register(&RegType::RT_SP, sp_val + 1);
         return data;
     }
@@ -807,8 +816,15 @@ impl CPU {
     /**
      * Increments the CPU timer.
      */
-    pub fn tick(&mut self, ticks: u32) -> () {
-        self.ticks += ticks;
+    pub fn cycles(&mut self, cycles: u32) -> () {
+        for _i in 0..cycles {
+            for _n in 0..4 {
+                self.ticks.fetch_add(1, Ordering::SeqCst);
+                if self.timer.lock().unwrap().tick() {
+                    request_interrupt(self, InterruptType::IT_TIMER);
+                }
+            }
+        }
     }
 
     /**
@@ -904,7 +920,7 @@ impl CPU {
     #[inline(always)]
     fn read_cb_reg(&mut self, reg: &RegType, bus: &mut AddressBus) -> u8 {
         if *reg == RegType::RT_HL {
-            return bus.read(self.read_reg(&RegType::RT_HL));
+            return bus.read(self, self.read_reg(&RegType::RT_HL));
         } else {
             if reg.is_16_bit() {
                 log::error!(target: "stdout", 
@@ -923,7 +939,7 @@ impl CPU {
     #[inline(always)]
     fn set_cb_reg(&mut self, reg: &RegType, value: u8, bus: &mut AddressBus) -> () {
         if *reg == RegType::RT_HL {
-            bus.write(self.read_reg(&RegType::RT_HL), value);
+            bus.write(self, self.read_reg(&RegType::RT_HL), value);
         } else {
             if reg.is_16_bit() {
                 log::error!(target: "stdout",
@@ -1036,7 +1052,7 @@ impl CPU {
      */
     fn fetch_instruction(&mut self, bus: &AddressBus) -> () {
         let pc = self.read_reg(&RegType::RT_PC);
-        self.opcode = bus.read(pc);
+        self.opcode = bus.read(self, pc);
         self.instr = Instruction::get_instruction(self.opcode);
         self.increment_pc();
     }
@@ -1066,25 +1082,25 @@ impl CPU {
                 AddrMode::AM_R_D8 => {
                     // Load 8-bit immediate value
                     let pc = self.read_reg(&RegType::RT_PC);
-                    self.fetched_data = bus.read(pc) as u16;
+                    self.fetched_data = bus.read(self, pc) as u16;
                     self.increment_pc();
-                    self.tick(1);
+                    self.cycles(1);
                     return;
                 },
                 AddrMode::AM_D16 | AddrMode::AM_R_D16 => {
                     // Load 16-bit immediate value
                     let mut pc = self.read_reg(&RegType::RT_PC);
                     // Lower byte
-                    let lo = bus.read(pc);
+                    let lo = bus.read(self, pc);
                     self.increment_pc();
-                    self.tick(1);
+                    self.cycles(1);
 
                     // Upper byte
                     pc = self.read_reg(&RegType::RT_PC);
-                    let hi = bus.read(pc);
+                    let hi = bus.read(self, pc);
                     self.increment_pc();
                     self.fetched_data = ((hi as u16) << 8) | (lo as u16);
-                    self.tick(1);
+                    self.cycles(1);
                     return;
                 },
                 AddrMode::AM_MR_R => {
@@ -1104,16 +1120,16 @@ impl CPU {
                     if (*self.instr).reg2 == RegType::RT_C {
                         addr |= 0xFF00;
                     }
-                    self.fetched_data = bus.read(addr) as u16;
-                    self.tick(1);
+                    self.fetched_data = bus.read(self, addr) as u16;
+                    self.cycles(1);
                 },
                 AddrMode::AM_R_HLI => {
                     // Load value from the memory location specified by HL
                     // into register and increment HL
                     assert! ((*self.instr).reg2 == RegType::RT_HL);
                     let hl_val = self.read_reg(&RegType::RT_HL);
-                    self.fetched_data = bus.read(hl_val) as u16;
-                    self.tick(1);
+                    self.fetched_data = bus.read(self, hl_val) as u16;
+                    self.cycles(1);
                     
                     // Sets the value of HL to HL + 1
                     self.set_register(&RegType::RT_HL, hl_val + 1);
@@ -1124,8 +1140,8 @@ impl CPU {
                     // into register and decrement HL
                     assert! ((*self.instr).reg2 == RegType::RT_HL);
                     let hl_val = self.read_reg(&RegType::RT_HL);
-                    self.fetched_data = bus.read(hl_val) as u16;
-                    self.tick(1);
+                    self.fetched_data = bus.read(self, hl_val) as u16;
+                    self.cycles(1);
                     
                     // Sets the value of HL to HL - 1
                     self.set_register(&RegType::RT_HL, hl_val - 1);
@@ -1159,8 +1175,8 @@ impl CPU {
                     // Load value from memory location specified by 8-bit
                     // immediate value into register
                     let pc = self.read_reg(&RegType::RT_PC);
-                    self.fetched_data = bus.read(pc) as u16;
-                    self.tick(1);
+                    self.fetched_data = bus.read(self, pc) as u16;
+                    self.cycles(1);
                     self.increment_pc();
                     return;
                 },
@@ -1168,9 +1184,9 @@ impl CPU {
                     // Store value from register into memory location
                     // specified by 8-bit immediate value
                     let pc = self.read_reg(&RegType::RT_PC);
-                    self.mem_dest = bus.read(pc) as u16 | 0xFF00;
+                    self.mem_dest = bus.read(self, pc) as u16 | 0xFF00;
                     self.dest_is_mem = true;
-                    self.tick(1);
+                    self.cycles(1);
                     self.increment_pc();
                     return;
                 },
@@ -1178,16 +1194,16 @@ impl CPU {
                     // Load value from memory location specified by SP +
                     // signed 8-bit immediate value into register
                     let pc = self.read_reg(&RegType::RT_PC);
-                    self.fetched_data = bus.read(pc) as u16;
-                    self.tick(1);
+                    self.fetched_data = bus.read(self, pc) as u16;
+                    self.cycles(1);
                     self.increment_pc();
                     return;
                 },
                 AddrMode::AM_D8 => {
                     // Load 8-bit immediate value
                     let pc = self.read_reg(&RegType::RT_PC);
-                    self.fetched_data = bus.read(pc) as u16;
-                    self.tick(1);
+                    self.fetched_data = bus.read(self, pc) as u16;
+                    self.cycles(1);
                     self.increment_pc();
                     return;
                 },
@@ -1197,16 +1213,16 @@ impl CPU {
                     // specified by 16-bit immediate value
                     let mut pc = self.read_reg(&RegType::RT_PC);
                     // Lower byte
-                    let lo = bus.read(pc);
+                    let lo = bus.read(self, pc);
                     self.increment_pc();
-                    self.tick(1);
+                    self.cycles(1);
                     // Upper byte
                     pc = self.read_reg(&RegType::RT_PC);
-                    let hi = bus.read(pc);
+                    let hi = bus.read(self, pc);
                     self.increment_pc();
                     self.mem_dest = ((hi as u16) << 8) | (lo as u16);
                     self.dest_is_mem = true;
-                    self.tick(1);
+                    self.cycles(1);
 
                     self.fetched_data = self.read_reg(&(*self.instr).reg2);
                     return;
@@ -1215,8 +1231,8 @@ impl CPU {
                     // Store 8-bit immediate value into memory location
                     // specified by register
                     let pc = self.read_reg(&RegType::RT_PC);
-                    self.fetched_data = bus.read(pc) as u16;
-                    self.tick(1);
+                    self.fetched_data = bus.read(self, pc) as u16;
+                    self.cycles(1);
                     self.increment_pc();
 
                     self.mem_dest = self.read_reg(&(*self.instr).reg1);
@@ -1227,8 +1243,8 @@ impl CPU {
                     // Load value from memory location specified by register
                     self.mem_dest = self.read_reg(&(*self.instr).reg1);
                     self.dest_is_mem = true;
-                    self.fetched_data = bus.read(self.mem_dest) as u16;
-                    self.tick(1);
+                    self.fetched_data = bus.read(self, self.mem_dest) as u16;
+                    self.cycles(1);
                     return;
                 },
                 AddrMode::AM_R_A16 => {
@@ -1236,18 +1252,18 @@ impl CPU {
                     // immediate value into register
                     let mut pc = self.read_reg(&RegType::RT_PC);
                     // Lower byte
-                    let lo = bus.read(pc);
+                    let lo = bus.read(self, pc);
                     self.increment_pc();
-                    self.tick(1);
+                    self.cycles(1);
                     // Upper byte
                     pc = self.read_reg(&RegType::RT_PC);
-                    let hi = bus.read(pc);
+                    let hi = bus.read(self, pc);
                     self.increment_pc();
-                    self.tick(1);
+                    self.cycles(1);
                     
                     let addr = ((hi as u16) << 8) | (lo as u16);
-                    self.fetched_data = bus.read(addr) as u16;
-                    self.tick(1);
+                    self.fetched_data = bus.read(self, addr) as u16;
+                    self.cycles(1);
                     return;
                 },
                 _ => {
@@ -1330,15 +1346,19 @@ impl CPU {
 
             // Fetch and Decode
             self.fetch_instruction(bus);
+            self.cycles(1);
             // Execute
             self.fetch_data(bus);
             if self.trace {
                 let instr_str = unsafe { (*self.instr).disass(self) };
-                // log::trace!(target: "trace_file", "{:<6} - 0x{:04X}: {:<12} ({:02X} {:02X} {:02X}) A:{:02X} F: {}{}{}{} BC: {:02X}{:02X} DE:{:02X}{:02X} HL: {:02X}{:02X}",
+                let pc_1 = bus.read(self, pc + 1);
+                let pc_2 = bus.read(self, pc + 2);
+                // log::trace!(target: "trace_file", "{:08X} - 0x{:04X}: {:<12} ({:02X} {:02X} {:02X}) A:{:02X} F: {}{}{}{} BC: {:02X}{:02X} DE:{:02X}{:02X} HL: {:02X}{:02X}",
+                // println!("{:08X} - 0x{:04X}: {:<12} ({:02X} {:02X} {:02X}) A:{:02X} F: {}{}{}{} BC: {:02X}{:02X} DE:{:02X}{:02X} HL: {:02X}{:02X}",
                 log::trace!(target: "trace_file", "0x{:04X}: {:<12} ({:02X} {:02X} {:02X}) A: {:02X} F: {}{}{}{} BC: {:02X}{:02X} DE: {:02X}{:02X} HL: {:02X}{:02X}",
-                // println!("{:<6} - 0x{:04X}: {:<12} ({:02X} {:02X} {:02X}) A:{:02X} F: {}{}{}{} BC: {:02X}{:02X} DE:{:02X}{:02X} HL: {:02X}{:02X}",
+                            // self.ticks.load(Ordering::SeqCst),
                             pc, instr_str,
-                            self.opcode, bus.read(pc + 1), bus.read(pc + 2),
+                            self.opcode, pc_1, pc_2,
                             self.registers.a,
                             if self.get_flag(Z_FLAG) { 'Z' } else { '-' },
                             if self.get_flag(N_FLAG) { 'N' } else { '-' },
@@ -1350,14 +1370,14 @@ impl CPU {
                         );
             }
 
-            dbg_update(bus);
+            dbg_update(self, bus);
             dbg_print();
 
             self.execute(bus);
         } else {
-            self.tick(1);
+            self.cycles(1);
             // If the CPU is halted
-            if self.int_flags > 0 {
+            if self.int_flags != 0 {
                 self.halted = false;
             }
         }

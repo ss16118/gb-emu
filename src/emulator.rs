@@ -55,7 +55,7 @@ fn cpu_run(arc_emulator: Arc<Mutex<Emulator>>, debug: bool) -> () {
         }
         drop(cpu);
         drop(bus);
-        emulator.tick();
+        emulator.cycles(1);
     }
 }
 
@@ -79,20 +79,24 @@ impl Emulator {
         cartridge.print_info(true);
         let cartridge_ptr = Arc::new(Mutex::new(cartridge));
 
+        // Timer initialization
+        let timer = Timer::new();
+        let timer_ptr = Arc::new(Mutex::new(timer));
+
         // CPU initialization
-        let mut cpu = CPU::new(trace);
+        let mut cpu = CPU::new(trace, timer_ptr.clone());
         
         // RAM initialization
         let ram = RAM::new();
         let ram_ptr = Arc::new(Mutex::new(ram));
 
+        let ppu = PPU::new();
+
         // Address bus initialization
         let address_bus = AddressBus::new(
-            cartridge_ptr.clone(), &mut cpu, ram_ptr.clone());
+            cartridge_ptr.clone(), ram_ptr.clone(), timer_ptr.clone());
         
         let cpu_ptr = Arc::new(Mutex::new(cpu));
-        let ppu = PPU::new();
-        let timer = Timer::new();        
 
         let emulator = Emulator {
             running: false,
@@ -102,7 +106,7 @@ impl Emulator {
             ram: ram_ptr.clone(),
             address_bus: Arc::new(Mutex::new(address_bus)),
             ppu: Arc::new(Mutex::new(ppu)),
-            timer: Arc::new(Mutex::new(timer)),
+            timer: timer_ptr.clone(),
         };
         log::info!(target: "stdout", "Initialize emulator: SUCCESS");
         return emulator;
@@ -112,15 +116,19 @@ impl Emulator {
      * Starts running the emulator
      */
     pub fn run(arc_emulator: Arc<Mutex<Emulator>>, debug: bool) -> () {
-        let cpu_thread = thread::spawn(move || cpu_run(arc_emulator, debug));
+        let cpu_thread = 
+            thread::spawn(move || cpu_run(arc_emulator, debug));
         let mut ui = UI::new();
-
         ui.handle_events();
 
         cpu_thread.join().unwrap();
     }
 
-    fn tick(&mut self) -> () {
-        self.cpu.lock().unwrap().tick(1);
+    /**
+     * Increases the tick count for the emulator as well
+     * as other components
+     */
+    pub fn cycles(&mut self, cycles: u32) -> () {
+        self.cpu.lock().unwrap().cycles(cycles);
     }
 }

@@ -9,12 +9,13 @@ const SERIAL_ADDR: u16 = 0x58;
 const JOYPAD_ADDR: u16 = 0x60;
 
 
-enum InterruptType {
-    IT_VBlank = 0x1,
-    IT_LCD_Stat = 0x2,
-    IT_Timer = 0x4,
-    IT_Serial = 0x8,
-    IT_Joypad = 0x10,
+#[allow(non_camel_case_types)]
+pub enum InterruptType {
+    IT_VBLANK = 0x1,
+    IT_LCD_STAT = 0x2,
+    IT_TIMER = 0x4,
+    IT_SERIAL = 0x8,
+    IT_JOYPAD = 0x10,
 }
 
 
@@ -29,13 +30,13 @@ fn set_interrupt_addr(cpu: &mut CPU, bus: &mut AddressBus, address: u16) -> () {
 }
 
 /**
- * A helper function 
+ * A helper function that checks if an interrupt should be triggered
  */
 fn interrupt_check(cpu: &mut CPU, address: u16,
         bus: &mut AddressBus, int_type: InterruptType) -> bool {
     let int_type_u8 = int_type as u8;
-    if ((cpu.int_flags & int_type_u8) > 0) && 
-       ((cpu.ie_register & int_type_u8 as u8) > 0) {
+    if ((cpu.get_int_flags() & int_type_u8) != 0) && 
+       ((cpu.get_ie_register() & int_type_u8) != 0) {
         // FIXME should probably not use magic number
         set_interrupt_addr(cpu, bus, address);
         cpu.set_int_flags(cpu.get_int_flags() & !int_type_u8);
@@ -46,10 +47,18 @@ fn interrupt_check(cpu: &mut CPU, address: u16,
     return false;
 }
 
+/**
+ * Handles interrupts
+ */
 pub fn handle_interrupts(cpu: &mut CPU, bus: &mut AddressBus) -> () {
-    if interrupt_check(cpu, VBLANK_ADDR, bus, InterruptType::IT_VBlank) {} 
-    else if interrupt_check(cpu, LCD_STAT_ADDR, bus, InterruptType::IT_LCD_Stat) {}
-    else if interrupt_check(cpu, TIMER_ADDR, bus, InterruptType::IT_Timer) {}
-    else if interrupt_check(cpu, SERIAL_ADDR, bus, InterruptType::IT_Serial) {} 
-    else if interrupt_check(cpu, JOYPAD_ADDR, bus, InterruptType::IT_Joypad) {}
+    if interrupt_check(cpu, VBLANK_ADDR, bus, InterruptType::IT_VBLANK) {} 
+    else if interrupt_check(cpu, LCD_STAT_ADDR, bus, InterruptType::IT_LCD_STAT) {}
+    else if interrupt_check(cpu, TIMER_ADDR, bus, InterruptType::IT_TIMER) {}
+    else if interrupt_check(cpu, SERIAL_ADDR, bus, InterruptType::IT_SERIAL) {} 
+    else if interrupt_check(cpu, JOYPAD_ADDR, bus, InterruptType::IT_JOYPAD) {}
+}
+
+
+pub fn request_interrupt(cpu: *mut CPU, interrupt_type: InterruptType) -> () {
+    unsafe { (*cpu).int_flags |= interrupt_type as u8; }
 }

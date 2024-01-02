@@ -137,11 +137,11 @@ impl CPU {
             // Half Carry Flag (H) is set if there is a carry from bit 3
             // to bit 4
             let h_flag = ((self.read_reg(&RegType::RT_SP) & 0x0F) +
-                (self.fetched_data & 0x0F)) > 0x10;
+                (self.fetched_data & 0x0F)) >= 0x10;
             // Carry Flag (C) is set if there is a carry from bit 7
             // to bit 8
             let c_flag = ((self.read_reg(&RegType::RT_SP) & 0xFF) +
-                (self.fetched_data & 0xFF)) > 0x100;
+                (self.fetched_data & 0xFF)) >= 0x100;
             
             self.set_flags(0, 0, h_flag as i8, c_flag as i8);
             let res: u16 = 
@@ -375,7 +375,7 @@ impl CPU {
             // Dealing with the special case of ADD SP, r8
             // Converts `fetched_data` to signed 8-bit integer
             let rel: i8 = self.fetched_data as i8;
-            val = self.read_reg(&RegType::RT_SP).checked_add_signed(rel as i16).unwrap() as u32;
+            val = self.read_reg(&RegType::RT_SP).wrapping_add_signed(rel as i16) as u32;
         }
 
         // Flags
@@ -1375,7 +1375,6 @@ impl CPU {
             dbg_print();
 
             self.execute(bus);
-            log::info!(target: "trace_file", "[DEBUG] Int flag value (FF0F): {:02X}", bus.read(self, 0xFF0F));
         } else {
             self.cycles(1);
             // If the CPU is halted

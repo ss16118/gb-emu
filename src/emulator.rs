@@ -4,21 +4,25 @@ pub mod io;
 pub mod dbg;
 pub mod dma;
 use dma::DMA;
-use cartridge::*;
+use std::sync::atomic::{AtomicU16, Ordering};
+use cartridge::CARTRIDGE_CTX;
 pub mod cpu;
-use cpu::CPU;
+use cpu::CPU_CTX;
+use cpu::interrupts::*;
 pub mod ram;
 use ram::RAM;
 pub mod address_bus;
-use address_bus::AddressBus;
+use address_bus::*;
 pub mod ppu;
 use ppu::PPU;
 pub mod timer;
-use timer::Timer;
+use timer::TIMER_CTX;
 pub mod ui;
 use ui::UI;
 use std::sync::Arc;
 use std::sync::Mutex;
+
+use crate::emulator::cpu::CPU;
 
 
 /**
@@ -28,37 +32,30 @@ use std::sync::Mutex;
 pub struct Emulator {
     running: bool,
     paused: bool,
-    cartridge: Arc<Mutex<Cartridge>>,
-    cpu: Arc<Mutex<CPU>>,
-    ram: Arc<Mutex<RAM>>,
-    address_bus: Arc<Mutex<AddressBus>>,
-    // Pixel Processing Unit
-    ppu: Arc<Mutex<PPU>>,
-    timer: Arc<Mutex<Timer>>,
-    dma: Arc<Mutex<DMA>>,
 }
 
 unsafe impl Send for Emulator {}
 
+pub static mut EMULATOR_CTX: Emulator = Emulator {
+    running: false,
+    paused: true,
+};
 
-fn cpu_run(arc_emulator: &Arc<Mutex<Emulator>>, debug: bool) -> () {
+fn cpu_run(debug: bool) -> () {
     log::info!("Emulator is running");
-    let mut emulator = arc_emulator.lock().unwrap();
-    emulator.running = true;
-    emulator.paused = false;
-    while emulator.running {
-        if emulator.paused {
-            std::thread::sleep(std::time::Duration::from_millis(32));
+    unsafe {
+        EMULATOR_CTX.running = true;
+        EMULATOR_CTX.paused = false;
+        while EMULATOR_CTX.running {
+            if EMULATOR_CTX.paused {
+                std::thread::sleep(std::time::Duration::from_millis(32));
+            }
+            CPU_CTX.step();
+            if debug {
+                CPU_CTX.print_state("trace_file");
+            }
+            Emulator::cycles(1);
         }
-        let mut cpu = emulator.cpu.lock().unwrap();
-        let mut bus = emulator.address_bus.lock().unwrap();
-        cpu.step(&mut bus);
-        if debug {
-            cpu.print_state("trace_file");
-        }
-        drop(cpu);
-        drop(bus);
-        emulator.cycles(1);
     }
 }
 
@@ -72,67 +69,27 @@ impl Emulator {
     * Create a new emulator instance given the path to
     * the ROM file.
     */
-    pub fn new(rom_file: &str, trace: bool) -> Emulator {
+    pub fn init(rom_file: &str, trace: bool) -> () {
         log::info!("Initializing emulator...");
 
         // Cartridge initialization
-        let mut cartridge = Cartridge::new();
         // Loads the ROM file into the cartridge
-        cartridge.load_rom_file(rom_file);
-        cartridge.print_info(true);
-        let cartridge_ptr = Arc::new(Mutex::new(cartridge));
-
-        // Timer initialization
-        let timer = Timer::new();
-        let timer_ptr = Arc::new(Mutex::new(timer));
-
-        // CPU initialization
-        let cpu = CPU::new(trace, timer_ptr.clone());
-        
-        // RAM initialization
-        let ram = RAM::new();
-        let ram_ptr = Arc::new(Mutex::new(ram));
-
-        // PPU initialization
-        let ppu = PPU::new();
-        let ppu_ptr = Arc::new(Mutex::new(ppu));
-
-        // DMA initialization
-        let dma = DMA::new();
-        let dma_ptr = Arc::new(Mutex::new(dma));
-
-        // Address bus initialization
-        let address_bus = AddressBus::new(
-            cartridge_ptr.clone(), ram_ptr.clone(),
-            timer_ptr.clone(), ppu_ptr.clone());
-        
-        let cpu_ptr = Arc::new(Mutex::new(cpu));
-
-        let emulator = Emulator {
-            running: false,
-            paused: true,
-            cartridge: cartridge_ptr.clone(),
-            cpu: cpu_ptr.clone(),
-            ram: ram_ptr.clone(),
-            address_bus: Arc::new(Mutex::new(address_bus)),
-            ppu: ppu_ptr.clone(),
-            timer: timer_ptr.clone(),
-            dma: dma_ptr.clone(),
-        };
+        unsafe {
+            CARTRIDGE_CTX.load_rom_file(rom_file);
+            CARTRIDGE_CTX.print_info(true);
+            CPU::cpu_init(trace);
+        }
         log::info!(target: "stdout", "Initialize emulator: SUCCESS");
-        return emulator;
     }
 
     /**
      * Starts running the emulator
      */
-    pub fn run(arc_emulator: Arc<Mutex<Emulator>>, debug: bool) -> () {
-        let mut ui = UI::new();
-        ui.run(&arc_emulator);
-
+    pub fn run(debug: bool) -> () {
         let cpu_thread = 
-            thread::spawn(move || cpu_run(&arc_emulator, debug));
-
+            thread::spawn(move || cpu_run(debug));
+        let mut ui = UI::new();
+        ui.run();
         cpu_thread.join().unwrap();
     }
 
@@ -140,7 +97,16 @@ impl Emulator {
      * Increases the tick count for the emulator as well
      * as other components
      */
-    pub fn cycles(&mut self, cycles: u32) -> () {
-        self.cpu.lock().unwrap().cycles(cycles);
+    pub fn cycles(cycles: u32) -> () {
+        for _i in 0..cycles {
+            for _n in 0..4 { 
+                unsafe {
+                    CPU_CTX.ticks.fetch_add(1, Ordering::Relaxed);
+                    if TIMER_CTX.tick() {
+                        request_interrupt( InterruptType::IT_TIMER);
+                    }
+                }
+            }
+        }
     }
 }

@@ -1,4 +1,4 @@
-
+use once_cell::sync::Lazy;
 // Bit masks for accessing the OAM flags
 const PRIORIT_MASK: u8      = 0x80;
 const Y_FLIP_MASK: u8       = 0x40;
@@ -37,7 +37,7 @@ impl OamEntry {
             flags: 0,
         }
     }
-    
+
     /**
      * Returns the value of the flag given its mask.
      */
@@ -59,14 +59,12 @@ pub struct PPU {
     vram: [u8; 0x2000],
 }
 
-impl PPU {
-    pub fn new() -> PPU {
-        PPU {
-            oam_ram: [OamEntry::new(); 40],
-            vram: [0; 0x2000],
-        }
-    }
+pub static mut PPU_CTX: Lazy<PPU> = Lazy::new(|| PPU {
+    oam_ram: [OamEntry::new(); 40],
+    vram: [0; 0x2000],
+});
 
+impl PPU {
     /**
      * Writes a byte to the OAM RAM
      */

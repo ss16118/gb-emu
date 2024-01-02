@@ -107,7 +107,7 @@ fn main() {
         }
     }
     // Initialize the emulator
-    let mut emulator = Emulator::new(&rom_file, *enable_tracing);
+    Emulator::init(&rom_file, *enable_tracing);
     // Starts the emulator
-    Emulator::run(Arc::new(Mutex::new(emulator)), *debug);
+    Emulator::run(*debug);
 }

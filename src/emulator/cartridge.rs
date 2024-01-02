@@ -31,6 +31,13 @@ pub struct Cartridge {
     rom: Vec<u8>,
 }
 
+pub static mut CARTRIDGE_CTX: Cartridge = Cartridge {
+    filename: String::new(),
+    rom_header: std::ptr::null(),
+    rom_size: 0,
+    rom: Vec::new(),
+};
+
 // A static lookup table that maps the cartridge type to a string
 static CARTRIDGE_TYPE: Map<u8, &'static str> = phf_map! {
     0x00_u8 => "ROM ONLY",
@@ -147,19 +154,6 @@ static LICENSE_CODE: Map<&'static str, &'static str> = phf_map! {
 
 
 impl Cartridge {
-    pub fn new() -> Cartridge {
-        log::info!("Initializing cartridge...");
-        // Initializes an empty cartridge
-        let cartridge = Cartridge {
-            filename: String::new(),
-            rom_header: std::ptr::null(),
-            rom_size: 0,
-            rom: Vec::new(),
-        };
-        log::info!(target: "stdout", "Initialize cartridge: SUCCESS");
-        return cartridge;
-    }
-
     /**
      * Parses the ROM header and stores the data in the cartridge
      */

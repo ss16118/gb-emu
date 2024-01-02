@@ -1,16 +1,15 @@
-use crate::emulator::address_bus::AddressBus;
-use crate::emulator::cpu::CPU;
+use crate::emulator::address_bus::*;
 
 static mut dbg_msg: [u8; 1024] = [0x00_u8; 1024];
 static mut msg_size: usize = 0;
 
-pub fn dbg_update(cpu: &mut CPU, bus: &mut AddressBus) -> () {
+pub fn dbg_update() -> () {
     unsafe {
-        if bus.read(cpu, 0xFF02) == 0x81 {
-            let c = bus.read(cpu, 0xFF01);
+        if bus_read(0xFF02) == 0x81 {
+            let c = bus_read(0xFF01);
             dbg_msg[msg_size] = c;
             msg_size += 1;
-            bus.write(cpu, 0xFF02, 0);
+            bus_write(0xFF02, 0);
         }
     }
 }

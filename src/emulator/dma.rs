@@ -1,6 +1,6 @@
-use crate::emulator::ppu::PPU;
-use crate::emulator::cpu::CPU;
-use crate::emulator::address_bus::AddressBus;
+use crate::emulator::ppu::PPU_CTX;
+use crate::emulator::address_bus::*;
+
 
 pub struct DMA {
     active: bool,
@@ -16,8 +16,6 @@ static mut DMA_CONTEXT: DMA = DMA {
     value: 0,
     start_delay: 0,
 };
-
-
 
 
 impl DMA {
@@ -42,8 +40,7 @@ impl DMA {
         return self.active;
     }
 
-    pub fn tick(&mut self, bus: &mut AddressBus,
-            cpu: &mut CPU, ppu: &mut PPU) -> () {
+    pub fn tick(&mut self) -> () {
         if !self.active { return; }
 
         if self.start_delay > 0 {
@@ -51,7 +48,9 @@ impl DMA {
             return;
         }
         let addr = (self.value as u16 * 0x100) + self.byte as u16;
-        ppu.oam_write(self.byte as u16, bus.read(cpu, addr));
+        unsafe {
+            PPU_CTX.oam_write(self.byte as u16, bus_read(addr));
+        }
 
         // Moves to the next byte
         self.byte += 1;

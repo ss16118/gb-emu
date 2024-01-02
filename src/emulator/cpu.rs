@@ -4,8 +4,9 @@ use std::sync::{Arc, Mutex};
 pub mod instruction;
 
 use instruction::*;
-use crate::emulator::timer::*;
-use crate::emulator::address_bus::AddressBus;
+use crate::emulator::Emulator;
+use crate::emulator::timer::TIMER_CTX;
+use crate::emulator::address_bus::*;
 use crate::emulator::dbg::*;
 use self::interrupts::{handle_interrupts, request_interrupt, InterruptType};
 
@@ -41,7 +42,7 @@ struct Registers {
  * https://www.youtube.com/watch?v=17cdj-HYpb0&list=PLVxiWMqQvhg_yk4qy2cSC3457wZJga_e5&index=3
  */
 pub struct CPU {
-    ticks: AtomicU64,
+    pub ticks: AtomicU64,
     // In trace mode
     trace: bool,
     halted: bool,
@@ -61,43 +62,42 @@ pub struct CPU {
     instr: *const Instruction,
     /* Interrupt enable register */
     ie_register: u8,
-    registers: Registers,
-    timer: Arc<Mutex<Timer>>
+    registers: Registers
 }
+
+pub static mut CPU_CTX: CPU = CPU {
+    ticks: AtomicU64::new(0),
+    trace: false,
+    halted: false,
+    stepping: false,
+    interrupt_master_enabled: false,
+    enabling_ime: false,
+    int_flags: 0,
+    opcode: 0,
+    fetched_data: 0,
+    mem_dest: 0,
+    dest_is_mem: false,
+    instr: ptr::null::<Instruction>(),
+    ie_register: 0,
+    registers: Registers {
+        a: 0x01, f: 0xB0, b: 0x00, c: 0x13,
+        d: 0x00, e: 0xD8, h: 0x01, l: 0x4D,
+        pc: 0x100, sp: 0xFFFE
+    },
+};
+
+
 
 impl CPU {
     /**
      * Creates a new CPU instance
      */
-    pub fn new(trace: bool, timer: Arc<Mutex<Timer>>) -> CPU {
+    pub fn cpu_init(trace: bool) -> () {
        
         log::info!("Initializing CPU...");
 
-        let cpu = CPU {
-            trace: trace,
-            halted: false,
-            stepping: false,
-            ticks: AtomicU64::new(0),
-            interrupt_master_enabled: false,
-            enabling_ime: false,
-            int_flags: 0,
-            opcode: 0,
-            fetched_data: 0,
-            mem_dest: 0,
-            dest_is_mem: false,
-            // Initialize the current instruction to null
-            instr: std::ptr::null::<Instruction>(),
-            ie_register: 0,
-            // Initializes PC to the entry point
-            registers: Registers {
-                a: 0x01, f: 0xB0, b: 0x00, c: 0x13,
-                d: 0x00, e: 0xD8, h: 0x01, l: 0x4D,
-                pc: 0x100, sp: 0xFFFE
-            },
-            timer: timer
-        };
+        unsafe { CPU_CTX.trace = trace };
         log::info!(target: "stdout", "Initializing CPU: SUCCESS");
-        return cpu;
     }
 
     /*****************************************
@@ -111,7 +111,7 @@ impl CPU {
     /**
      * Executes the LD instruction
      */
-    fn exec_ld(&mut self, bus: &mut AddressBus) -> () {
+    fn exec_ld(&mut self) -> () {
 
         if self.dest_is_mem {
             // E.g., LD (HL), A
@@ -119,12 +119,12 @@ impl CPU {
             // to the memory location specified by mem_dest
             if unsafe { (*self.instr).reg2.is_16_bit()  } {
                 // Writes 16-bit value to memory
-                bus.write_16(self, self.mem_dest, self.fetched_data);
+                bus_write_16(self.mem_dest, self.fetched_data);
             } else {
                 // Writes 8-bit value to memory
-                bus.write(self, self.mem_dest, self.fetched_data as u8);
+                bus_write(self.mem_dest, self.fetched_data as u8);
             }
-            self.cycles(1);
+            Emulator::cycles(1);
             return;
         }
 
@@ -162,17 +162,17 @@ impl CPU {
     /**
      * Executes the LDH instruction, i.e., Load into HRAM
      */
-    fn exec_ldh(&mut self, bus: &mut AddressBus) -> () {
+    fn exec_ldh(&mut self) -> () {
         if unsafe { (*self.instr).reg1 == RegType::RT_A } {
             // LDH A, (a8)
             let addr = self.fetched_data | 0xFF00;
-            let val: u16 = bus.read(self, addr) as u16;
+            let val: u16 = bus_read(addr) as u16;
             self.set_register(&RegType::RT_A, val);
         } else {
             // LDH (a8), A
-            bus.write(self, self.mem_dest, self.read_reg(&RegType::RT_A) as u8);
+            bus_write(self.mem_dest, self.read_reg(&RegType::RT_A) as u8);
         }
-        self.cycles(1);
+        Emulator::cycles(1);
     }
 
     /**
@@ -180,72 +180,71 @@ impl CPU {
      * perform some type of jump operation. If `push_pc`
      * is true, the current PC value is pushed onto the stack.
      */
-    fn goto_addr(&mut self, bus: &mut AddressBus,
-            address: u16, push_pc: bool) -> () {
+    fn goto_addr(&mut self, address: u16, push_pc: bool) -> () {
 
         if self.check_cond() {
             if push_pc {
-                self.stack_push16(bus, self.read_reg(&RegType::RT_PC));
-                self.cycles(2);
+                self.stack_push16( self.read_reg(&RegType::RT_PC));
+                Emulator::cycles(2);
             }
             self.set_register(&RegType::RT_PC, address);
-            self.cycles(1);
+            Emulator::cycles(1);
         }
     }
 
     /**
      * Executes the JP instruction. A wrapper function for goto_addr
      */
-    fn exec_jp(&mut self, bus: &mut AddressBus) -> () {
-        self.goto_addr(bus, self.fetched_data, false);
+    fn exec_jp(&mut self) -> () {
+        self.goto_addr(self.fetched_data, false);
     }
     
     /**
      * Executes the JP instruction. A wrapper function for goto_addr
      */
-    fn exec_jr(&mut self, bus: &mut AddressBus) -> () {
+    fn exec_jr(&mut self) -> () {
         let rel: i8 = (self.fetched_data & 0xFF) as i8;
         let pc = self.read_reg(&RegType::RT_PC);
         let addr = pc.checked_add_signed(rel as i16).unwrap();
-        self.goto_addr(bus, addr, false);
+        self.goto_addr(addr, false);
     }
 
     /**
      * Executes the CALL instruction. A wrapper function for goto_addr
      */
-    fn exec_call(&mut self, bus: &mut AddressBus) -> () {
-        self.goto_addr(bus, self.fetched_data, true);
+    fn exec_call(&mut self) -> () {
+        self.goto_addr( self.fetched_data, true);
     }
 
     /**
      * Executes the RET instruction.
      */
-    fn exec_ret(&mut self, bus: &mut AddressBus) -> () {
+    fn exec_ret(&mut self) -> () {
         if unsafe { (*self.instr).cond_type != CondType::CT_NONE } {
-            self.cycles(1);
+            Emulator::cycles(1);
         }
         if self.check_cond() {
-            let addr = self.stack_pop16(bus);
-            self.cycles(2);
+            let addr = self.stack_pop16();
+            Emulator::cycles(2);
             self.set_register(&RegType::RT_PC, addr);
-            self.cycles(1);
+            Emulator::cycles(1);
         }
     }
     
     /**
      * Executes the RETI instruction. A wrapper for exec_ret
      */
-    fn exec_reti(&mut self, bus: &mut AddressBus) -> () {
+    fn exec_reti(&mut self) -> () {
         // Re-enables interrupts
         self.interrupt_master_enabled = true;
-        self.exec_ret(bus);
+        self.exec_ret();
     }
 
     /**
      * Executes the RST instruction. A wrapper for goto_addr
      */
-    fn exec_rst(&mut self, bus: &mut AddressBus) -> () {
-        unsafe { self.goto_addr(bus, (*self.instr).param as u16, true); }
+    fn exec_rst(&mut self) -> () {
+        unsafe { self.goto_addr( (*self.instr).param as u16, true); }
     }
 
     /**
@@ -303,17 +302,17 @@ impl CPU {
     /**
      * Executes the INC instruction
      */
-    fn exec_inc(&mut self, bus: &mut AddressBus) -> () {
+    fn exec_inc(&mut self) -> () {
         let mut val = self.fetched_data.wrapping_add(1);
 
         if unsafe { (*self.instr).reg1.is_16_bit() } {
-            self.cycles(1);
+            Emulator::cycles(1);
         }
 
         if unsafe { (*self.instr).reg1 == RegType::RT_HL && self.dest_is_mem } {
             // Special case: INC (HL)
             val &= 0xFF;
-            bus.write(self, self.mem_dest, val as u8);
+            bus_write(self.mem_dest, val as u8);
         } else {
             // Normal case
             unsafe {
@@ -332,16 +331,16 @@ impl CPU {
     /**
      * Executes the DEC instruction
      */
-    fn exec_dec(&mut self, bus: &mut AddressBus) -> () {
+    fn exec_dec(&mut self) -> () {
         let mut val = self.fetched_data.wrapping_sub(1);
 
         if unsafe { (*self.instr).reg1.is_16_bit() } {
-            self.cycles(1);
+            Emulator::cycles(1);
         }
 
         if unsafe { (*self.instr).reg1 == RegType::RT_HL && self.dest_is_mem } {
             // Special case: DEC (HL)
-            bus.write(self, self.mem_dest, val as u8);
+            bus_write(self.mem_dest, val as u8);
         } else {
             // Normal case
             unsafe {
@@ -368,7 +367,7 @@ impl CPU {
 
         let is_16_bit = unsafe { (*self.instr).reg1.is_16_bit() };
         if is_16_bit {
-            self.cycles(1);
+            Emulator::cycles(1);
         }
 
         if unsafe { (*self.instr).reg1 == RegType::RT_SP } {
@@ -468,9 +467,9 @@ impl CPU {
     /**
      * Executes the POP instruction
      */
-    fn exec_pop(&mut self, bus: &mut AddressBus) -> () {
-        let value = self.stack_pop16(bus);
-        self.cycles(2);
+    fn exec_pop(&mut self) -> () {
+        let value = self.stack_pop16();
+        Emulator::cycles(2);
 
         unsafe {
             assert! ((*self.instr).reg1.is_16_bit());
@@ -487,19 +486,19 @@ impl CPU {
     /**
      * Executes the PUSH instruction
      */
-    fn exec_push(&mut self, bus: &mut AddressBus) -> () {
+    fn exec_push(&mut self) -> () {
         let hi = ((self.fetched_data & 0xFF00) >> 8) as u8;
         let lo = (self.fetched_data & 0x00FF) as u8;
 
-        self.stack_push(bus, hi);
-        self.cycles(1);
-        self.stack_push(bus, lo);
-        self.cycles(1);
+        self.stack_push(hi);
+        Emulator::cycles(1);
+        self.stack_push(lo);
+        Emulator::cycles(1);
 
-        self.cycles(1);
+        Emulator::cycles(1);
     }
 
-    fn exec_cb(&mut self, bus: &mut AddressBus) -> () {
+    fn exec_cb(&mut self) -> () {
         let cb_opcode = self.fetched_data as u8;
         // On which register to perform the operation
         let reg = cb_decode_reg(cb_opcode & 0b111);
@@ -507,13 +506,13 @@ impl CPU {
         let bit = (cb_opcode >> 3) & 0b111;
         // The operation to perform
         let bit_op = (cb_opcode >> 6) & 0b11;
-        let reg_val = self.read_cb_reg(reg, bus);
+        let reg_val = self.read_cb_reg(reg);
 
-        self.cycles(1);
+        Emulator::cycles(1);
 
 
         if *reg == RegType::RT_HL {
-            self.cycles(2);
+            Emulator::cycles(2);
         }
 
         match bit_op {
@@ -528,13 +527,13 @@ impl CPU {
                 // RES
                 // Resets the specified bit
                 let new_val = reg_val & !(1 << bit);
-                self.set_cb_reg(reg, new_val, bus);
+                self.set_cb_reg(reg, new_val);
                 return;
             },
             3 => {
                 // SET
                 let new_val = reg_val | (1 << bit);
-                self.set_cb_reg(reg, new_val, bus);
+                self.set_cb_reg(reg, new_val);
                 return;
             },
             _ => {
@@ -551,7 +550,7 @@ impl CPU {
                             new_val |= 1;
                             set_c = true;
                         }
-                        self.set_cb_reg(reg, new_val, bus);
+                        self.set_cb_reg(reg, new_val);
                         self.set_flags((new_val == 0) as i8, 0, 0, set_c as i8);
                     },
                     1 => {
@@ -559,7 +558,7 @@ impl CPU {
                         // Rotates the register right
                         let mut new_val = reg_val >> 1;
                         new_val |= reg_val << 7;
-                        self.set_cb_reg(reg, new_val, bus);
+                        self.set_cb_reg(reg, new_val);
                         self.set_flags((new_val == 0) as i8, 0, 0, (reg_val & 1) as i8);
                     },
                     2 => {
@@ -568,7 +567,7 @@ impl CPU {
                         let mut new_val = reg_val << 1;
                         new_val |= c_flag;
 
-                        self.set_cb_reg(reg, new_val, bus);
+                        self.set_cb_reg(reg, new_val);
                         self.set_flags((new_val == 0) as i8, 0, 0, (reg_val & 0x80 != 0) as i8);
                     },
                     3 => {
@@ -577,7 +576,7 @@ impl CPU {
                         let mut new_val = reg_val >> 1;
                         new_val |= c_flag << 7;
 
-                        self.set_cb_reg(reg, new_val, bus);
+                        self.set_cb_reg(reg, new_val);
                         self.set_flags((new_val == 0) as i8, 0, 0, (reg_val & 1) as i8);
                     },
                     4 => {
@@ -585,28 +584,28 @@ impl CPU {
                         // Shifts the register left into the carry flag
                         let new_val = reg_val << 1;
 
-                        self.set_cb_reg(reg, new_val, bus);
+                        self.set_cb_reg(reg, new_val);
                         self.set_flags((new_val == 0) as i8, 0, 0, (reg_val & 0x80 != 0) as i8);
                     },
                     5 => {
                         // SRA
                         // Shifts the register right into the carry flag
                         let new_val = (reg_val as i8 >> 1) as u8;
-                        self.set_cb_reg(reg, new_val, bus);
+                        self.set_cb_reg(reg, new_val);
                         self.set_flags((new_val == 0) as i8, 0, 0, (reg_val & 1) as i8);
                     },
                     6 => {
                         // SWAP
                         // Swaps the upper and lower nibbles of the register
                         let new_val = ((reg_val & 0x0F) << 4) | ((reg_val & 0xF0) >> 4);
-                        self.set_cb_reg(reg, new_val, bus);
+                        self.set_cb_reg(reg, new_val);
                         self.set_flags((new_val == 0) as i8, 0, 0, 0);
                     },
                     7 => {
                         // SRL
                         // Shifts the register right into the carry flag
                         let new_val = reg_val >> 1;
-                        self.set_cb_reg(reg, new_val, bus);
+                        self.set_cb_reg(reg, new_val);
                         self.set_flags((new_val == 0) as i8, 0, 0, (reg_val & 1) as i8);
                     },
                     _ => {
@@ -766,19 +765,19 @@ impl CPU {
      * pointer then  pushes an 8-bit value onto the memory
      * address specified by the stack pointer.
      */
-    fn stack_push(&mut self, bus: &mut AddressBus, data: u8) -> () {
+    fn stack_push(&mut self, data: u8) -> () {
         let mut sp_val = self.read_reg(&RegType::RT_SP);
         self.set_register(&RegType::RT_SP, sp_val - 1);
         sp_val = self.read_reg(&RegType::RT_SP);
-        bus.write(self, sp_val, data);
+        bus_write(sp_val, data);
     }
 
     /**
      * Pushes a 16-bit value onto the stack
      */
-    fn stack_push16(&mut self, bus: &mut AddressBus, data: u16) -> () {
-        self.stack_push(bus, ((data & 0xFF00) >> 8) as u8);
-        self.stack_push(bus, (data & 0x00FF) as u8);
+    fn stack_push16(&mut self, data: u16) -> () {
+        self.stack_push(((data & 0xFF00) >> 8) as u8);
+        self.stack_push((data & 0x00FF) as u8);
     }
 
     /**
@@ -786,9 +785,9 @@ impl CPU {
      * the memory address specified by the stack pointer then
      * increments the stack pointer.
      */
-    fn stack_pop(&mut self, bus: &mut AddressBus) -> u8 {
+    fn stack_pop(&mut self) -> u8 {
         let sp_val = self.read_reg(&RegType::RT_SP);
-        let data = bus.read(self, sp_val);
+        let data = bus_read(sp_val);
         self.set_register(&RegType::RT_SP, sp_val + 1);
         return data;
     }
@@ -796,9 +795,9 @@ impl CPU {
     /**
      * Pops a 16-bit value from the stack and returns it.
      */
-    fn stack_pop16(&mut self, bus: &mut AddressBus) -> u16 {
-        let lo = self.stack_pop(bus) as u16;
-        let hi = self.stack_pop(bus) as u16;
+    fn stack_pop16(&mut self) -> u16 {
+        let lo = self.stack_pop() as u16;
+        let hi = self.stack_pop() as u16;
         return (hi << 8) | lo;
     }
 
@@ -812,20 +811,6 @@ impl CPU {
      */
     fn increment_pc(&mut self) -> () {
         self.registers.pc += 1;
-    }
-
-    /**
-     * Increments the CPU timer.
-     */
-    pub fn cycles(&mut self, cycles: u32) -> () {
-        for _i in 0..cycles {
-            for _n in 0..4 {
-                self.ticks.fetch_add(1, Ordering::SeqCst);
-                if self.timer.lock().unwrap().tick() {
-                    request_interrupt(self, InterruptType::IT_TIMER);
-                }
-            }
-        }
     }
 
     /**
@@ -919,9 +904,9 @@ impl CPU {
      * the memory location specified by HL is returned.
      */
     #[inline(always)]
-    fn read_cb_reg(&mut self, reg: &RegType, bus: &mut AddressBus) -> u8 {
+    fn read_cb_reg(&mut self, reg: &RegType) -> u8 {
         if *reg == RegType::RT_HL {
-            return bus.read(self, self.read_reg(&RegType::RT_HL));
+            return bus_read(self.read_reg(&RegType::RT_HL));
         } else {
             if reg.is_16_bit() {
                 log::error!(target: "stdout", 
@@ -938,9 +923,9 @@ impl CPU {
      * location specified by HL is set.
      */
     #[inline(always)]
-    fn set_cb_reg(&mut self, reg: &RegType, value: u8, bus: &mut AddressBus) -> () {
+    fn set_cb_reg(&mut self, reg: &RegType, value: u8) -> () {
         if *reg == RegType::RT_HL {
-            bus.write(self, self.read_reg(&RegType::RT_HL), value);
+            bus_write(self.read_reg(&RegType::RT_HL), value);
         } else {
             if reg.is_16_bit() {
                 log::error!(target: "stdout",
@@ -1051,9 +1036,9 @@ impl CPU {
     /**
      * Fetches the next instruction
      */
-    fn fetch_instruction(&mut self, bus: &AddressBus) -> () {
+    fn fetch_instruction(&mut self) -> () {
         let pc = self.read_reg(&RegType::RT_PC);
-        self.opcode = bus.read(self, pc);
+        self.opcode = bus_read(pc);
         self.instr = Instruction::get_instruction(self.opcode);
         self.increment_pc();
     }
@@ -1064,7 +1049,7 @@ impl CPU {
      * @param bus: The address bus
      * @return (): Nothing
      *********************************************************/
-    fn fetch_data(&mut self, bus: &mut AddressBus) -> () {
+    fn fetch_data(&mut self) -> () {
         self.mem_dest = 0;
         self.dest_is_mem = false;
         unsafe {
@@ -1083,25 +1068,25 @@ impl CPU {
                 AddrMode::AM_R_D8 => {
                     // Load 8-bit immediate value
                     let pc = self.read_reg(&RegType::RT_PC);
-                    self.fetched_data = bus.read(self, pc) as u16;
+                    self.fetched_data = bus_read(pc) as u16;
                     self.increment_pc();
-                    self.cycles(1);
+                    Emulator::cycles(1);
                     return;
                 },
                 AddrMode::AM_D16 | AddrMode::AM_R_D16 => {
                     // Load 16-bit immediate value
                     let mut pc = self.read_reg(&RegType::RT_PC);
                     // Lower byte
-                    let lo = bus.read(self, pc);
+                    let lo = bus_read(pc);
                     self.increment_pc();
-                    self.cycles(1);
+                    Emulator::cycles(1);
 
                     // Upper byte
                     pc = self.read_reg(&RegType::RT_PC);
-                    let hi = bus.read(self, pc);
+                    let hi = bus_read(pc);
                     self.increment_pc();
                     self.fetched_data = ((hi as u16) << 8) | (lo as u16);
-                    self.cycles(1);
+                    Emulator::cycles(1);
                     return;
                 },
                 AddrMode::AM_MR_R => {
@@ -1121,16 +1106,16 @@ impl CPU {
                     if (*self.instr).reg2 == RegType::RT_C {
                         addr |= 0xFF00;
                     }
-                    self.fetched_data = bus.read(self, addr) as u16;
-                    self.cycles(1);
+                    self.fetched_data = bus_read(addr) as u16;
+                    Emulator::cycles(1);
                 },
                 AddrMode::AM_R_HLI => {
                     // Load value from the memory location specified by HL
                     // into register and increment HL
                     assert! ((*self.instr).reg2 == RegType::RT_HL);
                     let hl_val = self.read_reg(&RegType::RT_HL);
-                    self.fetched_data = bus.read(self, hl_val) as u16;
-                    self.cycles(1);
+                    self.fetched_data = bus_read(hl_val) as u16;
+                    Emulator::cycles(1);
                     
                     // Sets the value of HL to HL + 1
                     self.set_register(&RegType::RT_HL, hl_val + 1);
@@ -1141,8 +1126,8 @@ impl CPU {
                     // into register and decrement HL
                     assert! ((*self.instr).reg2 == RegType::RT_HL);
                     let hl_val = self.read_reg(&RegType::RT_HL);
-                    self.fetched_data = bus.read(self, hl_val) as u16;
-                    self.cycles(1);
+                    self.fetched_data = bus_read(hl_val) as u16;
+                    Emulator::cycles(1);
                     
                     // Sets the value of HL to HL - 1
                     self.set_register(&RegType::RT_HL, hl_val - 1);
@@ -1176,8 +1161,8 @@ impl CPU {
                     // Load value from memory location specified by 8-bit
                     // immediate value into register
                     let pc = self.read_reg(&RegType::RT_PC);
-                    self.fetched_data = bus.read(self, pc) as u16;
-                    self.cycles(1);
+                    self.fetched_data = bus_read(pc) as u16;
+                    Emulator::cycles(1);
                     self.increment_pc();
                     return;
                 },
@@ -1185,9 +1170,9 @@ impl CPU {
                     // Store value from register into memory location
                     // specified by 8-bit immediate value
                     let pc = self.read_reg(&RegType::RT_PC);
-                    self.mem_dest = bus.read(self, pc) as u16 | 0xFF00;
+                    self.mem_dest = bus_read(pc) as u16 | 0xFF00;
                     self.dest_is_mem = true;
-                    self.cycles(1);
+                    Emulator::cycles(1);
                     self.increment_pc();
                     return;
                 },
@@ -1195,16 +1180,16 @@ impl CPU {
                     // Load value from memory location specified by SP +
                     // signed 8-bit immediate value into register
                     let pc = self.read_reg(&RegType::RT_PC);
-                    self.fetched_data = bus.read(self, pc) as u16;
-                    self.cycles(1);
+                    self.fetched_data = bus_read(pc) as u16;
+                    Emulator::cycles(1);
                     self.increment_pc();
                     return;
                 },
                 AddrMode::AM_D8 => {
                     // Load 8-bit immediate value
                     let pc = self.read_reg(&RegType::RT_PC);
-                    self.fetched_data = bus.read(self, pc) as u16;
-                    self.cycles(1);
+                    self.fetched_data = bus_read(pc) as u16;
+                    Emulator::cycles(1);
                     self.increment_pc();
                     return;
                 },
@@ -1214,16 +1199,16 @@ impl CPU {
                     // specified by 16-bit immediate value
                     let mut pc = self.read_reg(&RegType::RT_PC);
                     // Lower byte
-                    let lo = bus.read(self, pc);
+                    let lo = bus_read(pc);
                     self.increment_pc();
-                    self.cycles(1);
+                    Emulator::cycles(1);
                     // Upper byte
                     pc = self.read_reg(&RegType::RT_PC);
-                    let hi = bus.read(self, pc);
+                    let hi = bus_read(pc);
                     self.increment_pc();
                     self.mem_dest = ((hi as u16) << 8) | (lo as u16);
                     self.dest_is_mem = true;
-                    self.cycles(1);
+                    Emulator::cycles(1);
 
                     self.fetched_data = self.read_reg(&(*self.instr).reg2);
                     return;
@@ -1232,8 +1217,8 @@ impl CPU {
                     // Store 8-bit immediate value into memory location
                     // specified by register
                     let pc = self.read_reg(&RegType::RT_PC);
-                    self.fetched_data = bus.read(self, pc) as u16;
-                    self.cycles(1);
+                    self.fetched_data = bus_read(pc) as u16;
+                    
                     self.increment_pc();
 
                     self.mem_dest = self.read_reg(&(*self.instr).reg1);
@@ -1244,8 +1229,8 @@ impl CPU {
                     // Load value from memory location specified by register
                     self.mem_dest = self.read_reg(&(*self.instr).reg1);
                     self.dest_is_mem = true;
-                    self.fetched_data = bus.read(self, self.mem_dest) as u16;
-                    self.cycles(1);
+                    self.fetched_data = bus_read(self.mem_dest) as u16;
+                    Emulator::cycles(1);
                     return;
                 },
                 AddrMode::AM_R_A16 => {
@@ -1253,18 +1238,18 @@ impl CPU {
                     // immediate value into register
                     let mut pc = self.read_reg(&RegType::RT_PC);
                     // Lower byte
-                    let lo = bus.read(self, pc);
+                    let lo = bus_read(pc);
                     self.increment_pc();
-                    self.cycles(1);
+                    Emulator::cycles(1);
                     // Upper byte
                     pc = self.read_reg(&RegType::RT_PC);
-                    let hi = bus.read(self, pc);
+                    let hi = bus_read(pc);
                     self.increment_pc();
-                    self.cycles(1);
+                    Emulator::cycles(1);
                     
                     let addr = ((hi as u16) << 8) | (lo as u16);
-                    self.fetched_data = bus.read(self, addr) as u16;
-                    self.cycles(1);
+                    self.fetched_data = bus_read(addr) as u16;
+                    Emulator::cycles(1);
                     return;
                 },
                 _ => {
@@ -1279,18 +1264,18 @@ impl CPU {
     /**
      * Executes the current instruction
      */
-    fn execute(&mut self, bus: &mut AddressBus) -> () {
+    fn execute(&mut self) -> () {
         unsafe {
             // FIXME There is no better way to do it in Rust?
             match (*self.instr).instr_type {
                 InstrType::IN_NOP   => { self.exec_none(); },
                 // Load instructions
-                InstrType::IN_LD    => { self.exec_ld(bus); },
-                InstrType::IN_LDH   => { self.exec_ldh(bus); },
+                InstrType::IN_LD    => { self.exec_ld(); },
+                InstrType::IN_LDH   => { self.exec_ldh(); },
 
                 // Arithmetic instructions
-                InstrType::IN_INC   => { self.exec_inc(bus); },
-                InstrType::IN_DEC   => { self.exec_dec(bus); },
+                InstrType::IN_INC   => { self.exec_inc(); },
+                InstrType::IN_DEC   => { self.exec_dec(); },
                 InstrType::IN_ADD   => { self.exec_add(); },
                 InstrType::IN_ADC   => { self.exec_adc(); },
                 InstrType::IN_SUB   => { self.exec_sub(); },
@@ -1303,16 +1288,16 @@ impl CPU {
                 InstrType::IN_CP    => { self.exec_cp(); },
 
                 // Jump instructions
-                InstrType::IN_JP    => { self.exec_jp(bus); },
-                InstrType::IN_JR    => { self.exec_jr(bus); },
-                InstrType::IN_CALL  => { self.exec_call(bus); },
-                InstrType::IN_RET   => { self.exec_ret(bus); },
-                InstrType::IN_RETI  => { self.exec_reti(bus); },
-                InstrType::IN_RST   => { self.exec_rst(bus); },
+                InstrType::IN_JP    => { self.exec_jp(); },
+                InstrType::IN_JR    => { self.exec_jr(); },
+                InstrType::IN_CALL  => { self.exec_call(); },
+                InstrType::IN_RET   => { self.exec_ret(); },
+                InstrType::IN_RETI  => { self.exec_reti(); },
+                InstrType::IN_RST   => { self.exec_rst(); },
 
                 // Misc instructions
                 InstrType::IN_DI    => { self.exec_di(); },
-                InstrType::IN_CB    => { self.exec_cb(bus); }
+                InstrType::IN_CB    => { self.exec_cb(); }
                 InstrType::IN_RLCA  => { self.exec_rlca(); },
                 InstrType::IN_RLA   => { self.exec_rla(); },
                 InstrType::IN_RRCA  => { self.exec_rrca(); },
@@ -1326,8 +1311,8 @@ impl CPU {
                 InstrType::IN_EI    => { self.exec_ei(); },
 
                 // Stack-related instructions
-                InstrType::IN_PUSH  => { self.exec_push(bus); },
-                InstrType::IN_POP   => { self.exec_pop(bus); },
+                InstrType::IN_PUSH  => { self.exec_push(); },
+                InstrType::IN_POP   => { self.exec_pop(); },
                 _ => {
                     log::error!(target: "stdout", "Instruction {:?} not implemented",
                         (*self.instr).instr_type);
@@ -1341,19 +1326,19 @@ impl CPU {
     /*****************************************
      * Executes a single instruction
      *****************************************/
-    pub fn step(&mut self, bus: &mut AddressBus) -> bool {
+    pub fn step(&mut self) -> bool {
         if !self.halted {
             let pc = self.read_reg(&RegType::RT_PC);
 
             // Fetch and Decode
-            self.fetch_instruction(bus);
-            self.cycles(1);
+            self.fetch_instruction();
+            Emulator::cycles(1);
             // Execute
-            self.fetch_data(bus);
+            self.fetch_data();
             if self.trace {
                 let instr_str = unsafe { (*self.instr).disass(self) };
-                let pc_1 = bus.read(self, pc + 1);
-                let pc_2 = bus.read(self, pc + 2);
+                let pc_1 = bus_read(pc + 1);
+                let pc_2 = bus_read(pc + 2);
                 // log::trace!(target: "trace_file", "{:08X} - 0x{:04X}: {:<12} ({:02X} {:02X} {:02X}) A:{:02X} F: {}{}{}{} BC: {:02X}{:02X} DE:{:02X}{:02X} HL: {:02X}{:02X}",
                 // println!("{:08X} - 0x{:04X}: {:<12} ({:02X} {:02X} {:02X}) A:{:02X} F: {}{}{}{} BC: {:02X}{:02X} DE:{:02X}{:02X} HL: {:02X}{:02X}",
                 log::trace!(target: "trace_file", "0x{:04X}: {:<12} ({:02X} {:02X} {:02X}) A: {:02X} F: {}{}{}{} BC: {:02X}{:02X} DE: {:02X}{:02X} HL: {:02X}{:02X}",
@@ -1371,12 +1356,12 @@ impl CPU {
                         );
             }
 
-            dbg_update(self, bus);
+            dbg_update();
             dbg_print();
 
-            self.execute(bus);
+            self.execute();
         } else {
-            self.cycles(1);
+            Emulator::cycles(1);
             // If the CPU is halted
             if self.int_flags != 0 {
                 self.halted = false;
@@ -1384,7 +1369,7 @@ impl CPU {
         }
 
         if self.interrupt_master_enabled {
-             handle_interrupts(self, bus);
+             handle_interrupts();
              self.enabling_ime = false;
         }
 

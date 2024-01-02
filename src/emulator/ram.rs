@@ -6,17 +6,12 @@ pub struct RAM {
 }
 
 
-impl RAM {
-    pub fn new() -> RAM {
-        log::info!("Initializing RAM...");
-        let ram = RAM {
-            wram: [0; 0x2000],
-            hram: [0; 0x80]
-        };
-        log::info!(target: "stdout", "Initialize RAM: SUCCESS");
-        return ram;
-    }
+pub static mut RAM_CTX: RAM = RAM {
+    wram: [0; 0x2000],
+    hram: [0; 0x80]
+};
 
+impl RAM {
     /**
      * Reads a byte from the WRAM
      */    

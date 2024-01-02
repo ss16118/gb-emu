@@ -25,17 +25,12 @@ pub struct Timer {
     tac: u8,
 }
 
-impl Timer {
-    pub fn new() -> Timer {
-        log::info!("Initializing timer...");
-        let timer = Timer {
-            div: AtomicU16::new(0xABCC),
-            tima: 0, tma: 0, tac: 0
-        };
-        log::info!(target: "stdout", "Initialize timer: SUCCESS");
-        return timer;
-    }
+pub static mut TIMER_CTX: Timer = Timer {
+    div: AtomicU16::new(0xABCC),
+    tima: 0, tma: 0, tac: 0
+}; 
 
+impl Timer {
     /**
      * Performs one timer tick. Returns true if the timer
      * interrupt should be requested.

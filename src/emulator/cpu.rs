@@ -1355,8 +1355,8 @@ impl CPU {
                         );
             }
 
-            // dbg_update();
-            // dbg_print();
+            dbg_update();
+            dbg_print();
 
             self.execute();
         } else {

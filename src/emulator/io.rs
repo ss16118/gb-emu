@@ -4,6 +4,7 @@ use crate::emulator::timer::*;
 use crate::emulator::dma::*;
 use crate::emulator::cpu::{CPU_CTX, INT_FLAGS_ADDR};
 use crate::emulator::ppu::PPU_CTX;
+use crate::emulator::lcd::*;
 static mut serial_data: [u8; 2] = [0, 0];
 
 
@@ -22,6 +23,9 @@ pub fn io_read(address: u16) -> u8 {
     }
     if address == INT_FLAGS_ADDR {
         return unsafe { CPU_CTX.get_int_flags() };
+    }
+    if LCD_START_ADDR <= address && address <= LCD_END_ADDR {
+        return unsafe { LCD_CTX.read(address) };
     }
     log::error!("Reading from I/O address 0x{:04X} currently not supported", address);
     return 0;
@@ -49,8 +53,8 @@ pub fn io_write(address: u16, data: u8) -> () {
         unsafe { CPU_CTX.set_int_flags(data) };
         return;
     }
-    if address == DMA_ADDR {
-        unsafe { DMA_CTX.start(data); }
+    if LCD_START_ADDR <= address && address <= LCD_END_ADDR {
+        unsafe { LCD_CTX.write(address, data) };
         return;
     }
     log::error!("Writing to I/O address 0x{:04X} currently not supported", address);

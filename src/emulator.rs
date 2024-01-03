@@ -3,6 +3,8 @@ pub mod cartridge;
 pub mod io;
 pub mod dbg;
 pub mod dma;
+pub mod lcd;
+use lcd::LCD_CTX;
 use dma::DMA_CTX;
 use std::sync::atomic::{AtomicU16, Ordering};
 use cartridge::CARTRIDGE_CTX;

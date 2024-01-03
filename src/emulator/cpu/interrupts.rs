@@ -65,6 +65,5 @@ pub fn handle_interrupts() -> () {
 
 
 pub fn request_interrupt(interrupt_type: InterruptType) -> () {
-    log::info!(target: "trace_file", "Interrupt requested: {:?}", interrupt_type);
     unsafe { CPU_CTX.int_flags |= interrupt_type as u8; }
 }

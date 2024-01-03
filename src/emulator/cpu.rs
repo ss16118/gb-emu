@@ -8,10 +8,9 @@ use crate::emulator::Emulator;
 use crate::emulator::timer::TIMER_CTX;
 use crate::emulator::address_bus::*;
 use crate::emulator::dbg::*;
-use self::interrupts::{handle_interrupts, request_interrupt, InterruptType};
+use self::interrupts::{handle_interrupts};
 
 pub mod interrupts;
-
 
 
 const Z_FLAG: u8 = 0x80;
@@ -184,8 +183,8 @@ impl CPU {
 
         if self.check_cond() {
             if push_pc {
-                self.stack_push16( self.read_reg(&RegType::RT_PC));
                 Emulator::cycles(2);
+                self.stack_push16( self.read_reg(&RegType::RT_PC));
             }
             self.set_register(&RegType::RT_PC, address);
             Emulator::cycles(1);
@@ -767,7 +766,7 @@ impl CPU {
      */
     fn stack_push(&mut self, data: u8) -> () {
         let mut sp_val = self.read_reg(&RegType::RT_SP);
-        self.set_register(&RegType::RT_SP, sp_val - 1);
+        self.set_register(&RegType::RT_SP, sp_val.wrapping_sub(1));
         sp_val = self.read_reg(&RegType::RT_SP);
         bus_write(sp_val, data);
     }
@@ -1356,8 +1355,8 @@ impl CPU {
                         );
             }
 
-            dbg_update();
-            dbg_print();
+            // dbg_update();
+            // dbg_print();
 
             self.execute();
         } else {

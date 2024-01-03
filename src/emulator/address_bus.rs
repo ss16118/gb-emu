@@ -6,6 +6,7 @@ use crate::emulator::io::{io_read, io_write};
 use crate::emulator::timer::TIMER_CTX;
 use crate::emulator::cpu::CPU_CTX;
 use crate::emulator::ppu::PPU_CTX;
+use crate::emulator::dma::DMA_CTX;
 use super::cartridge::CARTRIDGE_CTX;
 /**
  * A struct that defines the address bus
@@ -41,7 +42,7 @@ use super::cartridge::CARTRIDGE_CTX;
  */
 pub fn bus_read(address: u16) -> u8 {
     // Given address indicates ROM address
-    if address <= 0x8000 {
+    if address < 0x8000 {
         // Reads from ROM
         return unsafe { CARTRIDGE_CTX.read(address) };
     } else if address < 0xA000 {
@@ -53,8 +54,14 @@ pub fn bus_read(address: u16) -> u8 {
     } else if address < 0xE000 {
         // Reads from Work RAM (WRAM)
         return unsafe { RAM_CTX.wram_read(address) };
+    } else if address < 0xFE00 {
+        // Reads from ECHO RAM
+        return 0;
     } else if address < 0xFEA0 {
         // Reads from Object Attribute Memory (OAM)
+        if unsafe { DMA_CTX.is_transferring() } {
+            return 0xFF;
+        }
         return unsafe { PPU_CTX.oam_read(address) };
     } else if address < 0xFF00 {
         // Reads from reserved memory (UNUSABLE)
@@ -81,7 +88,7 @@ pub fn bus_read(address: u16) -> u8 {
  */
 pub fn bus_write(address: u16, data: u8) -> () {
     // Given address indicates ROM address
-    if address <= 0x8000 {
+    if address < 0x8000 {
         // Writes to ROM
         unsafe { CARTRIDGE_CTX.write(address, data) };
     } else if address < 0xA000 {
@@ -93,8 +100,16 @@ pub fn bus_write(address: u16, data: u8) -> () {
     } else if address < 0xE000 {
         // Writes to Work RAM (WRAM)
         unsafe { RAM_CTX.wram_write(address, data) };
+        return;
+    } else if address < 0xFE00 {
+        // Writes to ECHO RAM
+        return;
     } else if address < 0xFEA0 {
         // Writes to Object Attribute Memory (OAM)
+        if unsafe { DMA_CTX.is_transferring() } {
+            return;
+        }
+        log::info!(target: "trace_file", "[DEBUG] [BUS WRITE] Writing to OAM address {:04X}: {:02X}", address, data);
         unsafe { PPU_CTX.oam_write(address, data) };
     } else if address < 0xFF00 {
         // Writes to reserved memory (UNUSABLE)

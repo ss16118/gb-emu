@@ -1,6 +1,7 @@
 use crate::emulator::ppu::PPU_CTX;
 use crate::emulator::address_bus::*;
 
+pub const DMA_ADDR: u16 = 0xFF46;
 
 pub struct DMA {
     active: bool,
@@ -10,7 +11,7 @@ pub struct DMA {
 }
 
 // A global instance of DMA context
-static mut DMA_CONTEXT: DMA = DMA {
+pub static mut DMA_CTX: DMA = DMA {
     active: false,
     byte: 0,
     value: 0,
@@ -19,17 +20,8 @@ static mut DMA_CONTEXT: DMA = DMA {
 
 
 impl DMA {
-    pub fn new() -> DMA {
-        DMA {
-            active: false,
-            byte: 0,
-            value: 0,
-            start_delay: 0,
-        }
-    }
-
     pub fn start(&mut self, start: u8) -> () {
-        log::info!("DMA start: {:02X}", start);
+        log::info!(target: "trace_file", "DMA start: {:02X}", start);
         self.active = true;
         self.byte = 0;
         self.value = start;

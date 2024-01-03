@@ -69,7 +69,10 @@ impl PPU {
      * Writes a byte to the OAM RAM
      */
     pub fn oam_write(&mut self, mut address: u16, value: u8) -> () {
-        address -= 0xFE00;
+        log::info!(target: "trace_file", "Writing to OAM address {:04X}: {:02X}", address, value);
+        if address >= 0xFE00 {
+            address -= 0xFE00;
+        }
         // Converts OAM RAM into a byte array
         let oam_bytes = unsafe {
             std::slice::from_raw_parts_mut(
@@ -89,7 +92,9 @@ impl PPU {
      * Reads a byte from the OAM RAM
      */
     pub fn oam_read(&self, mut address: u16) -> u8 {
-        address -= 0xFE00;
+        if address >= 0xFE00 {
+            address -= 0xFE00;
+        }
         // Converts OAM RAM into a byte array
         let oam_bytes = unsafe {
             std::slice::from_raw_parts(
@@ -129,5 +134,12 @@ impl PPU {
             log::error!("Invalid read from VRAM address {:04X}", address);
             std::process::exit(-1);
         }
+    }
+
+    /**
+     * Performs a single PPU tick
+     */
+    pub fn tick(&mut self) -> () {
+
     }
 }

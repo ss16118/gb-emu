@@ -1,6 +1,7 @@
 use std::ptr;
 
 use crate::emulator::timer::*;
+use crate::emulator::dma::*;
 use crate::emulator::cpu::{CPU_CTX, INT_FLAGS_ADDR};
 use crate::emulator::ppu::PPU_CTX;
 static mut serial_data: [u8; 2] = [0, 0];
@@ -46,6 +47,10 @@ pub fn io_write(address: u16, data: u8) -> () {
     }
     if address == INT_FLAGS_ADDR {
         unsafe { CPU_CTX.set_int_flags(data) };
+        return;
+    }
+    if address == DMA_ADDR {
+        unsafe { DMA_CTX.start(data); }
         return;
     }
     log::error!("Writing to I/O address 0x{:04X} currently not supported", address);

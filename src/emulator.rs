@@ -3,7 +3,7 @@ pub mod cartridge;
 pub mod io;
 pub mod dbg;
 pub mod dma;
-use dma::DMA;
+use dma::DMA_CTX;
 use std::sync::atomic::{AtomicU16, Ordering};
 use cartridge::CARTRIDGE_CTX;
 pub mod cpu;
@@ -88,8 +88,10 @@ impl Emulator {
     pub fn run(debug: bool) -> () {
         let cpu_thread = 
             thread::spawn(move || cpu_run(debug));
-        let mut ui = UI::new();
-        ui.run();
+        let mut main = UI::new();
+        // ui.run();
+        let mut debug_window = UI::create_debug_window(&main);
+        UI::run(&mut main, &mut debug_window);
         cpu_thread.join().unwrap();
     }
 
@@ -103,10 +105,11 @@ impl Emulator {
                 unsafe {
                     CPU_CTX.ticks.fetch_add(1, Ordering::Relaxed);
                     if TIMER_CTX.tick() {
-                        request_interrupt( InterruptType::IT_TIMER);
+                        request_interrupt(InterruptType::IT_TIMER);
                     }
                 }
             }
+            unsafe { DMA_CTX.tick(); }
         }
     }
 }

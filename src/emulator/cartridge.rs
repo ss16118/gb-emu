@@ -209,7 +209,7 @@ impl Cartridge {
      * false otherwise.
      */
     pub fn write(&mut self, address: u16, data: u8) -> () {
-        self.rom[address as usize] = data;
+        // self.rom[address as usize] = data;
     }
 
     /**

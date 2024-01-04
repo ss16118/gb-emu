@@ -4,7 +4,7 @@ pub mod io;
 pub mod dbg;
 pub mod dma;
 pub mod lcd;
-use lcd::LCD_CTX;
+use lcd::*;
 use dma::DMA_CTX;
 use std::sync::atomic::{AtomicU16, Ordering};
 use cartridge::CARTRIDGE_CTX;
@@ -16,7 +16,7 @@ use ram::RAM;
 pub mod address_bus;
 use address_bus::*;
 pub mod ppu;
-use ppu::PPU;
+use ppu::PPU_CTX;
 pub mod timer;
 use timer::TIMER_CTX;
 pub mod ui;
@@ -79,6 +79,7 @@ impl Emulator {
         unsafe {
             CARTRIDGE_CTX.load_rom_file(rom_file);
             CARTRIDGE_CTX.print_info(true);
+            LCD::init();
             CPU::cpu_init(trace);
         }
         log::info!(target: "stdout", "Initialize emulator: SUCCESS");
@@ -91,7 +92,6 @@ impl Emulator {
         let cpu_thread = 
             thread::spawn(move || cpu_run(debug));
         let mut main = UI::new();
-        // ui.run();
         let mut debug_window = UI::create_debug_window(&main);
         UI::run(&mut main, &mut debug_window);
         cpu_thread.join().unwrap();
@@ -102,6 +102,7 @@ impl Emulator {
      * as other components
      */
     pub fn cycles(cycles: u32) -> () {
+
         for _i in 0..cycles {
             for _n in 0..4 { 
                 unsafe {
@@ -109,6 +110,7 @@ impl Emulator {
                     if TIMER_CTX.tick() {
                         request_interrupt(InterruptType::IT_TIMER);
                     }
+                    PPU_CTX.tick();
                 }
             }
             unsafe { DMA_CTX.tick(); }

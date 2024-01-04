@@ -23,13 +23,13 @@ pub struct LCD {
     // STAT - LCDC Status
     lcds: u8,
     // SCY - Scroll Y
-    scroll_y: u8,
+    pub scroll_y: u8,
     // SCX - Scroll X
-    scroll_x: u8,
+    pub scroll_x: u8,
     // LY - LCDC Y-Coordinate
-    ly: u8,
+    pub ly: u8,
     // LYC - LY Compare
-    lyc: u8,
+    pub lyc: u8,
     // DMA - DMA Transfer and Start Address
     dma: u8,
     // BGP - BG Palette Data
@@ -42,12 +42,13 @@ pub struct LCD {
     win_x: u8,
 
     // Other data
-    bg_colors: [u32; 4],
+    pub bg_colors: [u32; 4],
     sp1_colors: [u32; 4],
     sp2_colors: [u32; 4],
 }
 
-enum LCD_MODE {
+#[derive(Copy, Clone, Debug)]
+pub enum LCD_MODE {
     MODE_HBLANK = 0,
     MODE_VBLANK = 1,
     MODE_OAM = 2,
@@ -80,14 +81,14 @@ impl TryFrom<u8> for LCD_MODE {
  * BG & Window enable / priority [Different meaning in CGB Mode]: 0 = Off; 1 = On
  */
 /* Bit masks for accessing the LCD Control register */
-const LCD_ENABLE_MASK: u8 = 0x80;
-const WIN_TILE_MAP_MASK: u8 = 0x40;
-const WIN_ENABLE_MASK: u8 = 0x20;
-const BG_TILE_DATA_MASK: u8 = 0x10;
-const BG_TILE_MAP_MASK: u8 = 0x08;
-const OBJ_SIZE_MASK: u8 = 0x04;
-const OBJ_ENABLE_MASK: u8 = 0x02;
-const BGW_ENABLE_MASK: u8 = 0x01;
+pub const LCD_ENABLE_MASK: u8 = 0x80;
+pub const WIN_TILE_MAP_MASK: u8 = 0x40;
+pub const WIN_ENABLE_MASK: u8 = 0x20;
+pub const BG_TILE_DATA_MASK: u8 = 0x10;
+pub const BG_TILE_MAP_MASK: u8 = 0x08;
+pub const OBJ_SIZE_MASK: u8 = 0x04;
+pub const OBJ_ENABLE_MASK: u8 = 0x02;
+pub const BGW_ENABLE_MASK: u8 = 0x01;
 
 /**
  * LCD Status:
@@ -109,10 +110,10 @@ const BGW_ENABLE_MASK: u8 = 0x01;
  * will not run on a GBC.
  */
 /* Bit masks for accessing the LCD Status register */
-const LYC_INT_MASK: u8 = 0x40;
-const MODE2_INT_MASK: u8 = 0x20;
-const MODE1_INT_MASK: u8 = 0x10;
-const MODE0_INT_MASK: u8 = 0x08;
+pub const LYC_INT_MASK: u8 = 0x40;
+pub const OAM_INT_MASK: u8 = 0x20;
+pub const VBLANK_INT_MASK: u8 = 0x10;
+pub const HBLANK_INT_MASK: u8 = 0x08;
 const LYC_LY_MASK: u8 = 0x04;
 const PPU_MODE_MASK: u8 = 0x03;
 
@@ -136,6 +137,11 @@ pub static mut LCD_CTX: LCD = LCD {
 
 
 impl LCD {
+    pub fn init() -> () {
+        log::info!("Initializing LCD...");
+        unsafe { LCD_CTX.set_lcds_mode(LCD_MODE::MODE_OAM); }
+        log::info!(target: "stdout", "Initialize LCD: SUCCESS");
+    }
 
     pub fn read(&self, addr: u16) -> u8 {
         match addr {

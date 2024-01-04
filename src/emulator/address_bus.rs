@@ -109,7 +109,6 @@ pub fn bus_write(address: u16, data: u8) -> () {
         if unsafe { DMA_CTX.is_transferring() } {
             return;
         }
-        log::info!(target: "trace_file", "[DEBUG] [BUS WRITE] Writing to OAM address {:04X}: {:02X}", address, data);
         unsafe { PPU_CTX.oam_write(address, data) };
     } else if address < 0xFF00 {
         // Writes to reserved memory (UNUSABLE)

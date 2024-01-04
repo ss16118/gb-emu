@@ -1,10 +1,10 @@
 extern crate sdl2;
 use std::sync::{Arc, Mutex};
-use sdl2::{pixels::Color, render::Canvas, Sdl, video::Window, 
-    rect::Rect, surface::Surface};
+use sdl2::{pixels::Color, render::Canvas, Sdl, video::Window,
+    rect::Rect, surface::Surface, pixels::PixelFormatEnum, pixels::PixelFormat};
 use std::time::Duration;
 use crate::emulator::address_bus::*;
-use crate::emulator::Emulator;
+use crate::emulator::ppu::*;
 
 const SCALE: i32 = 4;
 const WIDTH: u32 = 1024;
@@ -17,6 +17,7 @@ const TILE_COLORS: [Color; 4] = [
     Color::RGB(0x55, 0x55, 0x55), // Dark gray
     Color::RGB(0, 0, 0) // Black
 ];
+
 
 pub struct UI {
     context: Box<Sdl>,
@@ -97,6 +98,9 @@ impl UI {
         }
     }
 
+    /**
+     * A helper function that updates the debug window
+     */
     fn update_debug_window(debug_window: &mut UI) -> () {
         // Fills the debug window with the color gray
         let rect = Rect::new(0, 0, 16 * 8 * SCALE as u32, 32 * 8 * SCALE as u32);
@@ -118,14 +122,42 @@ impl UI {
             y_draw += 8 * SCALE;
             x_draw = 0;
         }
+        debug_window.canvas.present();
     }
+
+    /**
+     * A helper function that updates the main window
+     */
+    fn update_main_window(main: &mut UI) -> () {
+        let pixel_format = PixelFormat::try_from(PixelFormatEnum::ARGB8888).unwrap();
+        let mut rect = Rect::new(0, 0, 2048, 2048);
+        let video_buffer = unsafe { PPU_CTX.video_buffer.clone() };
+        // Loops through each line and each pixel in the line
+        for line_num in 0..Y_RES {
+            for x in 0..X_RES {
+                rect.x = x as i32 * SCALE;
+                rect.y = line_num as i32 * SCALE;
+                rect.w = SCALE;
+                rect.h = SCALE;
+
+                let offset: u32 = (line_num as u32 * X_RES as u32) + x as u32;
+                main.canvas.set_draw_color(Color::from_u32(&pixel_format,
+                    video_buffer[offset as usize]));
+                main.canvas.fill_rect(rect).unwrap();
+            }
+        }
+        main.canvas.present();
+    }
+
     /**
      * UI loop, runs until the user closes the window. Handles events,
      * and updates the screen.
      */
     pub fn run(main: &mut UI, debug_window: &mut UI) -> () {
         let mut main_event_pump = main.context.event_pump().unwrap();
+        let mut prev_frame: u64 = 0;
         'running: loop {
+            // Event handling
             for event in main_event_pump.poll_iter() {
                 match event {
                     sdl2::event::Event::Quit {..} => std::process::exit(0),
@@ -135,12 +167,31 @@ impl UI {
                     _ => {}
                 }
             }
-            // UI::update(main, debug_window);
-            // Updates UI
-            UI::update_debug_window(debug_window);
-            main.canvas.present();
-            debug_window.canvas.present();
+            if prev_frame != unsafe { PPU_CTX.curr_frame } {
+                UI::update_debug_window(debug_window);
+                UI::update_main_window(main);
+            }
+            prev_frame = unsafe { PPU_CTX.curr_frame };
+            // main.canvas.present();
+            // debug_window.canvas.present();
             std::thread::sleep(Duration::new(0, 1_000_000_000u32 / FREQ));
         }
+    }
+
+
+    /**
+     * Returns the number of milliseconds since the SDL
+     * library was initialized. A wrapper for SDL_GetTicks64.
+     */
+    pub fn get_ticks() -> u64 {
+        return unsafe { sdl2_sys::SDL_GetTicks64() };
+    }
+
+    /**
+     * Delays the program for the given number of milliseconds.
+     * A wrapper for SDL_Delay.
+     */
+    pub fn delay(ms: u32) -> () {
+        unsafe { sdl2_sys::SDL_Delay(ms) };
     }
 }

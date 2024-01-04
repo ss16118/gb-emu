@@ -21,7 +21,6 @@ pub static mut DMA_CTX: DMA = DMA {
 
 impl DMA {
     pub fn start(&mut self, start: u8) -> () {
-        log::info!(target: "trace_file", "DMA start: {:02X}", start);
         self.active = true;
         self.byte = 0;
         self.value = start;

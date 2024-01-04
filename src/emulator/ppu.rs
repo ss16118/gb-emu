@@ -1,6 +1,9 @@
+use std::collections::LinkedList;
+use std::sync::Arc;
+
 use once_cell::sync::Lazy;
 use crate::emulator::cpu::interrupts::*;
-use crate::emulator::ui::UI;
+use crate::emulator::ui;
 use crate::emulator::address_bus::*;
 use super::{lcd::*, cpu::interrupts::request_interrupt};
 
@@ -8,7 +11,7 @@ pub mod fifo;
 use fifo::*;
 
 // Bit masks for accessing the OAM flags
-const PRIORIT_MASK: u8      = 0x80;
+const PRIORITY_MASK: u8      = 0x80;
 const Y_FLIP_MASK: u8       = 0x40;
 const X_FLIP_MAKS: u8       = 0x20;
 const DMG_PALETTE_MASK: u8  = 0x10;
@@ -76,6 +79,12 @@ pub struct PPU {
     pub curr_frame: u64,
     line_ticks: u32,
     pixel_fifo: PixelFifo,
+    // A list of sprites on the current line
+    line_sprites: Vec<*mut OamEntry>,
+    fetched_entry_count: u8,
+    // Entries fetched during pipeline
+    fetched_entries: [*mut OamEntry; 3],
+
     pub video_buffer: Box<[u32; (X_RES as u32 * Y_RES as u32) as usize]>,
     oam_ram: [OamEntry; 40],
     vram: [u8; 0x2000],
@@ -86,6 +95,9 @@ pub static mut PPU_CTX: Lazy<PPU> = Lazy::new(|| PPU {
     curr_frame: 0,
     line_ticks: 0,
     pixel_fifo: PixelFifo::new(),
+    line_sprites: Vec::new(),
+    fetched_entry_count: 0,
+    fetched_entries: [std::ptr::null_mut(); 3],
     video_buffer: Box::new([0; (X_RES as u32 * Y_RES as u32) as usize]),
     oam_ram: [OamEntry::new(); 40],
     vram: [0; 0x2000],
@@ -167,6 +179,61 @@ impl PPU {
      **********************************************************/
 
     /**
+     * A helper function that fetches the color of a pixel
+     */
+    fn fetch_sprite_pixels(&mut self, mut bit: i32, mut color: u32, bg_color: u8) -> u32 {
+        // Iterates through all the fetched entries
+        for i in 0..(self.fetched_entry_count) {
+            let fetched_entry = unsafe { *self.fetched_entries[i as usize] };
+            let sp_x = (fetched_entry.x.wrapping_sub(8)).wrapping_add(unsafe { LCD_CTX.scroll_x % 8 });
+            
+            if sp_x.wrapping_add(8) < self.pixel_fifo.fifo_x {
+                // If we have past the sprite, continue
+                continue;
+            }
+
+            let offset: i32 = (self.pixel_fifo.fifo_x as i32) - (sp_x as i32);
+
+            if offset < 0 || offset > 7 {
+                // Out of bounds
+                continue;
+            }
+
+            bit = (7 - offset) as i32;
+            if fetched_entry.get_flag(X_FLIP_MAKS) != 0 {
+                bit = offset;
+            }
+            let hi = 
+                ((self.pixel_fifo.fetch_entry_data[(i * 2) as usize] & (1 << bit)) != 0) as u8;
+            let lo =
+                (((self.pixel_fifo.fetch_entry_data[((i * 2) + 1) as usize] & (1 << bit)) != 0) as u8) << 1;
+
+            let bg_priority = fetched_entry.get_flag(PRIORITY_MASK) != 0;
+
+            let val = hi | lo;
+            if val == 0 {
+                // Transparent pixel
+                continue;
+            }
+
+            if !bg_priority || bg_color == 0 {
+                let palette = fetched_entry.get_flag(DMG_PALETTE_MASK) != 0;
+                if palette {
+                    color = unsafe { LCD_CTX.sp2_colors[val as usize] };
+                } else {
+                    color = unsafe { LCD_CTX.sp1_colors[val as usize] };
+                }
+
+                if val != 0 {
+                    break;
+                }
+            }
+        }
+
+        return color;
+    }
+
+    /**
      * A helper function that tries to add a new entry to the FIFO
      * and returns true if the entry was added successfully.
      * Otherwise, i.e., if the FIFO is full, it returns false.
@@ -182,10 +249,20 @@ impl PPU {
             (8 - unsafe { LCD_CTX.scroll_x } % 8) as i32;
         
         for i in 0..8 {
-            let bit = (7 - i) as u8;
+            let bit: i32 = (7 - i) as i32;
             let hi = ((self.pixel_fifo.bgw_fetch_data[1] & (1 << bit) != 0) as u8) << 1;
             let lo = (self.pixel_fifo.bgw_fetch_data[2] & (1 << bit) != 0) as u8;
-            let color = unsafe { LCD_CTX.bg_colors[(hi | lo) as usize] };
+            let mut color = unsafe { LCD_CTX.bg_colors[(hi | lo) as usize] };
+
+            // Checks if the background window display is enabled
+            if unsafe { !LCD_CTX.get_lcdc_flag(BGW_ENABLE_MASK) } {
+                color = unsafe { LCD_CTX.bg_colors[0] };
+            }
+
+            // Checks if sprites are enabled
+            if unsafe { LCD_CTX.get_lcdc_flag(OBJ_ENABLE_MASK) } {
+                color = self.fetch_sprite_pixels(bit, color, hi | lo);
+            }
 
             if x >= 0 {
                 self.pixel_fifo.push(color);
@@ -196,6 +273,57 @@ impl PPU {
         return true;
     }
 
+
+    /**
+     * A helper function that loads a sprite tile from memory
+     */
+    fn pipeline_load_sprite_tile(&mut self) -> () {
+        // Iterates through line sprites
+        for i in 0..self.line_sprites.len() {
+            let mut entry = unsafe { *self.line_sprites[i] };
+            let sp_x = (entry.x.wrapping_sub(8)).wrapping_add(unsafe { LCD_CTX.scroll_x % 8 });
+
+            // The sprite is within the current fetch range
+            if (sp_x >= self.pixel_fifo.fetch_x && 
+                sp_x < self.pixel_fifo.fetch_x.wrapping_add(8)) || 
+                ((sp_x.wrapping_add(8)) >= self.pixel_fifo.fetch_x && 
+                (sp_x.wrapping_add(8)) < self.pixel_fifo.fetch_x.wrapping_add(8)) {
+                
+                self.fetched_entries[self.fetched_entry_count as usize] = &mut entry;
+                self.fetched_entry_count = self.fetched_entry_count.wrapping_add(1);
+            }
+
+            if self.fetched_entry_count >= 3 {
+                // Max 3 sprites per line
+                break;
+            }
+        }
+    }
+
+
+    /**
+     * A helper function that loads sprite data from memory
+     */
+    fn pipeline_load_sprite_data(&mut self, offset: u8) -> () {
+        let curr_y = unsafe { LCD_CTX.ly };
+        let sprite_height = unsafe { LCD_CTX.get_lcdc_obj_size() };
+        for i in 0..self.fetched_entry_count {
+            let entry = unsafe { *self.fetched_entries[i as usize] };
+            let mut tile_y = curr_y.wrapping_add(16).wrapping_sub(entry.y.wrapping_mul(2));
+            if entry.get_flag(Y_FLIP_MASK) != 0 {
+                // If flipped upside down
+                tile_y =((sprite_height as u16 * 2 - 2) as u8).wrapping_sub(tile_y);
+            }
+            let tile_index: u8 = entry.tile;
+            if sprite_height == 16 {
+                // Removes the last bit
+                tile_y &= !1;
+            }
+            let addr = 0x8000 + (tile_index as u32 * 16) as u16 + tile_y as u16;
+            self.pixel_fifo.fetch_entry_data[(i * 2 + offset) as usize] =  bus_read(addr);
+        }
+    }
+
     /**
      * A helper function that fetches a tile based on the
      * current fetch state
@@ -203,6 +331,7 @@ impl PPU {
     fn pipeline_fetch(&mut self) -> () {
         match self.pixel_fifo.curr_state {
             FetchState::FS_TILE => {
+                self.fetched_entry_count = 0;
                 // Checks if the background window display is enabled
                 if unsafe { LCD_CTX.get_lcdc_flag(BGW_ENABLE_MASK) } {
                     let map_area = unsafe { LCD_CTX.get_lcdc_bg_tile_map_area() };
@@ -216,6 +345,13 @@ impl PPU {
                             self.pixel_fifo.bgw_fetch_data[0].wrapping_add(128);
                     }
                 }
+
+                // If sprites are enabled and there are sprites on the current line
+                if unsafe { LCD_CTX.get_lcdc_flag(OBJ_ENABLE_MASK) } && 
+                    self.line_sprites.len() > 0 {
+                    self.pipeline_load_sprite_tile();
+                }
+
                 // Sets the next fetch state
                 self.pixel_fifo.curr_state = FetchState::FS_TILE_DATA_LOW;
                 self.pixel_fifo.fetch_x += 8;
@@ -227,6 +363,8 @@ impl PPU {
                     (self.pixel_fifo.tile_y as u16);
                 let data = bus_read(addr);
                 self.pixel_fifo.bgw_fetch_data[1] = data;
+                
+                self.pipeline_load_sprite_data(0);
 
                 // Sets the next fetch state
                 self.pixel_fifo.curr_state = FetchState::FS_TILE_DATA_HIGH;
@@ -238,6 +376,8 @@ impl PPU {
                     (self.pixel_fifo.tile_y as u16 + 1);
                 let data = bus_read(addr);
                 self.pixel_fifo.bgw_fetch_data[2] = data;
+
+                self.pipeline_load_sprite_data(1);
 
                 // Sets the next fetch state
                 self.pixel_fifo.curr_state = FetchState::FS_IDLE;
@@ -335,15 +475,16 @@ impl PPU {
 
                 // Aims to match the current frame rate
                 // with the target frame rate
-                let curr_time: u64 = UI::get_ticks();
+                let curr_time: u64 = ui::get_ticks();
                 let frame_delay = curr_time - unsafe { prev_frame_time };
                 if frame_delay < TARGET_FRAME_TIME {
-                    UI::delay((TARGET_FRAME_TIME - frame_delay) as u32);
+                    ui::delay((TARGET_FRAME_TIME - frame_delay) as u32);
                 }
 
                 // Computes the FPS
                 if curr_time - unsafe { start_timer } >= 1000 {
-                    log::info!(target: "stdout", "FPS: {}", unsafe { frame_counter });
+                    // log::info!(target: "stdout", "FPS: {}", unsafe { frame_counter });
+                    println!("FPS: {}", unsafe { frame_counter });
                     unsafe { 
                         frame_counter = 0;
                         start_timer = curr_time;
@@ -351,7 +492,7 @@ impl PPU {
                 }
                 unsafe {
                     frame_counter = frame_counter.checked_add(1).unwrap();
-                    prev_frame_time = UI::get_ticks();
+                    prev_frame_time = ui::get_ticks();
                 }
 
             } else {
@@ -385,6 +526,41 @@ impl PPU {
     }
 
     /**
+     * A helper function that loads sprites on the current line
+     */
+    fn load_line_sprites(&mut self) -> () {
+        let curr_y = unsafe { LCD_CTX.ly };
+        let sprite_height = unsafe { LCD_CTX.get_lcdc_obj_size() };
+        for i in 0..self.oam_ram.len() {
+            let mut entry = self.oam_ram[i];
+            if entry.x == 0 {
+                // If the sprite is not visible
+                continue;
+            }
+
+            if self.line_sprites.len() > 10 {
+                // Max 10 sprites per line
+                break;
+            }
+
+            if entry.y <= curr_y.wrapping_add(16) && 
+                entry.y.wrapping_add(sprite_height) > curr_y.wrapping_add(16) {
+                // the sprite is on the current line
+                // Adds the sprite to the list of sprites on the current line
+                self.line_sprites.push(&mut entry);
+                continue;
+            }
+
+            // Sorts the sprites by their x coordinate
+            self.line_sprites.sort_by(|a, b| {
+                let a_x = (unsafe { *(*a) }).x;
+                let b_x = (unsafe { *(*b) }).x;
+                a_x.cmp(&b_x)
+            });
+        }
+    }
+
+    /**
      * Performs operations under the OAM mode
      */
     fn mode_oam(&mut self) -> () {
@@ -393,6 +569,13 @@ impl PPU {
         if self.line_ticks >= 80 {
             unsafe { LCD_CTX.set_lcds_mode(LCD_MODE::MODE_XFER); }
             self.pixel_fifo.reset();
+        }
+
+        if self.line_ticks == 1 {
+            // Reads OAM on the first tick
+            // https://www.youtube.com/watch?v=MLzcci5HL0Y&list=PLVxiWMqQvhg_yk4qy2cSC3457wZJga_e5&index=14
+            self.line_sprites.clear();
+            self.load_line_sprites();
         }
 
     }

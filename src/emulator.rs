@@ -20,7 +20,6 @@ use ppu::PPU_CTX;
 pub mod timer;
 use timer::TIMER_CTX;
 pub mod ui;
-use ui::UI;
 use std::sync::Arc;
 use std::sync::Mutex;
 
@@ -91,9 +90,8 @@ impl Emulator {
     pub fn run(debug: bool) -> () {
         let cpu_thread = 
             thread::spawn(move || cpu_run(debug));
-        let mut main = UI::new();
-        let mut debug_window = UI::create_debug_window(&main);
-        UI::run(&mut main, &mut debug_window);
+        ui::init();
+        ui::run();
         cpu_thread.join().unwrap();
     }
 

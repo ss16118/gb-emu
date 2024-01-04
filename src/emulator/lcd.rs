@@ -43,8 +43,8 @@ pub struct LCD {
 
     // Other data
     pub bg_colors: [u32; 4],
-    sp1_colors: [u32; 4],
-    sp2_colors: [u32; 4],
+    pub sp1_colors: [u32; 4],
+    pub sp2_colors: [u32; 4],
 }
 
 #[derive(Copy, Clone, Debug)]

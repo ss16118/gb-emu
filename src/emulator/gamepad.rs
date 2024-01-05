@@ -1,22 +1,25 @@
 
 /**
  * Game Pad state
+ * FIXME: I know it is not the best practice
+ * to make all the fields public, but I
+ * don't want to write getters and setters, lol
  */
-struct GamePadState {
-    start: bool,
-    select: bool,
-    a: bool,
-    b: bool,
-    up: bool,
-    down: bool,
-    left: bool,
-    right: bool,
+pub struct GamePadState {
+    pub start: bool,
+    pub select: bool,
+    pub a: bool,
+    pub b: bool,
+    pub up: bool,
+    pub down: bool,
+    pub left: bool,
+    pub right: bool,
 }
 
 pub struct GamePad {
     button_select: bool,
     dir_select: bool,
-    controller: GamePadState,
+    pub controller: GamePadState,
 }
 
 pub static mut GAMEPAD_CTX: GamePad = GamePad {

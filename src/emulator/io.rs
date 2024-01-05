@@ -5,6 +5,7 @@ use crate::emulator::dma::*;
 use crate::emulator::cpu::{CPU_CTX, INT_FLAGS_ADDR};
 use crate::emulator::ppu::PPU_CTX;
 use crate::emulator::lcd::*;
+use crate::emulator::gamepad::*;
 static mut serial_data: [u8; 2] = [0, 0];
 
 
@@ -12,6 +13,9 @@ static mut serial_data: [u8; 2] = [0, 0];
  * Reads a byte from the given address from the I/O registers
  */
 pub fn io_read(address: u16) -> u8 {
+    if address == 0xFF00 {
+        return unsafe { GAMEPAD_CTX.get_output() };
+    }
     if address == 0xFF01 {
         return unsafe { serial_data[0] };
     }
@@ -36,6 +40,10 @@ pub fn io_read(address: u16) -> u8 {
  * Writes a byte to the given address
  */
 pub fn io_write(address: u16, data: u8) -> () {
+    if address == 0xFF00 {
+        unsafe { GAMEPAD_CTX.set_select(data) };
+        return;
+    }
     
     if address == 0xFF01 {
         unsafe { serial_data[0] = data };

@@ -4,6 +4,7 @@ pub mod io;
 pub mod dbg;
 pub mod dma;
 pub mod lcd;
+pub mod gamepad;
 use lcd::*;
 use dma::DMA_CTX;
 use std::sync::atomic::{AtomicU16, Ordering};

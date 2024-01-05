@@ -2,10 +2,12 @@ use sdl2_sys::*;
 use sdl2_sys::SDL_TextureAccess::*;
 use sdl2_sys::SDL_PixelFormatEnum::*;
 use sdl2_sys::SDL_EventType::*;
+use sdl2_sys::SDL_KeyCode::*;
 use sdl2_sys::SDL_WindowEventID::*;
 
 use crate::emulator::address_bus::*;
 use crate::emulator::ppu::*;
+use crate::emulator::gamepad::*;
 
 const SCALE: i32 = 4;
 const WIDTH: i32 = 1024;
@@ -18,6 +20,17 @@ const TILE_COLORS: [u32; 4] = [
     0xFF555555, // Dark gray
     0xFF000000 // Black
 ];
+
+// Jesus christ rust is a pain when
+// it comes to converting enums to ints
+const KEY_Z: i32 = SDLK_z as i32;
+const KEY_X: i32 = SDLK_x as i32;
+const KEY_RETURN: i32 = SDLK_RETURN as i32;
+const KEY_TAB: i32 = SDLK_TAB as i32;
+const KEY_UP: i32 = SDLK_UP as i32;
+const KEY_DOWN: i32 = SDLK_DOWN as i32;
+const KEY_LEFT: i32 = SDLK_LEFT as i32;
+const KEY_RIGHT: i32 = SDLK_RIGHT as i32;
 
 
 static mut main_window: *mut SDL_Window = std::ptr::null_mut();
@@ -173,6 +186,43 @@ fn update_main_window() -> () {
     }
 }
 
+
+/**
+ * A helper function that handles key events
+ */
+fn handle_key_event(down: bool, key_code: i32) -> () {
+    match key_code {
+        KEY_Z => {
+            unsafe { GAMEPAD_CTX.controller.b = down };
+        },
+        KEY_X => {
+            unsafe { GAMEPAD_CTX.controller.a = down };
+        },
+        KEY_RETURN => {
+            unsafe { GAMEPAD_CTX.controller.start = down };
+        },
+        KEY_TAB => {
+            unsafe { GAMEPAD_CTX.controller.select = down };
+        },
+        KEY_UP => {
+            unsafe { GAMEPAD_CTX.controller.up = down };
+        },
+        KEY_DOWN => {
+            unsafe { GAMEPAD_CTX.controller.down = down };
+        },
+        KEY_LEFT => {
+            unsafe { GAMEPAD_CTX.controller.left = down };
+        },
+        KEY_RIGHT => {
+            unsafe { GAMEPAD_CTX.controller.right = down };
+        },
+        _ => {
+            log::warn!("Unsupported key code: {}", key_code);
+        }
+    }
+}
+
+
 /**
  * UI loop, runs until the user closes the window. Handles events,
  * and updates the screen.
@@ -187,21 +237,18 @@ pub fn run() -> () {
         // Event handling
         unsafe {
             while SDL_PollEvent(&mut event) > 0 {
-                if (event.type_ == SDL_WINDOWEVENT as u32) && 
+                if event.type_ == SDL_KEYDOWN as u32 {
+                    // Down arrow
+                    handle_key_event(true, event.key.keysym.sym);
+                } else if event.type_ == SDL_KEYUP as u32 {
+                    // Up arrow
+                    handle_key_event(false, event.key.keysym.sym);
+                } else if (event.type_ == SDL_WINDOWEVENT as u32) && 
                    (event.window.event == SDL_WINDOWEVENT_CLOSE as u8) {
                     std::process::exit(0);
                 }
             }
         }
-        // for event in main_event_pump.poll_iter() {
-        //     match event {
-        //         sdl2::event::Event::Quit {..} => std::process::exit(0),
-        //         sdl2::event::Event::Window { 
-        //             win_event: sdl2::event::WindowEvent::Close, .. 
-        //         } => std::process::exit(0),
-        //         _ => {}
-        //     }
-        // }
         if prev_frame != unsafe { PPU_CTX.curr_frame } {
             update_debug_window();
             update_main_window();

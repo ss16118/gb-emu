@@ -33,7 +33,7 @@ impl DMA {
 
     pub fn tick(&mut self) -> () {
         if !self.active { return; }
-
+        
         if self.start_delay > 0 {
             self.start_delay -= 1;
             return;

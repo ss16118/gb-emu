@@ -37,9 +37,9 @@ pub struct LCD {
     // OBP - Object Palette Data
     obj_palette: [u8; 2],
     // WY - Window Y Position
-    win_y: u8,
+    pub win_y: u8,
     // WX - Window X Position
-    win_x: u8,
+    pub win_x: u8,
 
     // Other data
     pub bg_colors: [u32; 4],

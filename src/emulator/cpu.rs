@@ -1,14 +1,12 @@
 use std::ptr;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::atomic::AtomicU64;
 pub mod instruction;
 
 use instruction::*;
 use crate::emulator::Emulator;
-use crate::emulator::timer::TIMER_CTX;
 use crate::emulator::address_bus::*;
 use crate::emulator::dbg::*;
-use self::interrupts::{handle_interrupts};
+use self::interrupts::handle_interrupts;
 
 pub mod interrupts;
 
@@ -40,6 +38,7 @@ struct Registers {
  * A struct that defines the CPU context
  * https://www.youtube.com/watch?v=17cdj-HYpb0&list=PLVxiWMqQvhg_yk4qy2cSC3457wZJga_e5&index=3
  */
+#[allow(dead_code)]
 pub struct CPU {
     pub ticks: AtomicU64,
     // In trace mode
@@ -117,6 +116,7 @@ impl CPU {
             // If the destination is memory, write the fetched data
             // to the memory location specified by mem_dest
             if unsafe { (*self.instr).reg2.is_16_bit()  } {
+                Emulator::cycles(1);
                 // Writes 16-bit value to memory
                 bus_write_16(self.mem_dest, self.fetched_data);
             } else {
@@ -223,8 +223,14 @@ impl CPU {
             Emulator::cycles(1);
         }
         if self.check_cond() {
-            let addr = self.stack_pop16();
-            Emulator::cycles(2);
+            // let addr = self.stack_pop16();
+            let lo: u16 = self.stack_pop() as u16;
+            Emulator::cycles(1);
+
+            let hi: u16 = self.stack_pop() as u16;
+            Emulator::cycles(1);
+
+            let addr = (hi << 8) | lo;
             self.set_register(&RegType::RT_PC, addr);
             Emulator::cycles(1);
         }
@@ -467,8 +473,12 @@ impl CPU {
      * Executes the POP instruction
      */
     fn exec_pop(&mut self) -> () {
-        let value = self.stack_pop16();
-        Emulator::cycles(2);
+        // let value = self.stack_pop16();
+        let lo: u16 = self.stack_pop() as u16;
+        Emulator::cycles(1);
+        let hi: u16 = self.stack_pop() as u16;
+        Emulator::cycles(1);
+        let value = (hi << 8) | lo;
 
         unsafe {
             assert! ((*self.instr).reg1.is_16_bit());
@@ -487,12 +497,12 @@ impl CPU {
      */
     fn exec_push(&mut self) -> () {
         let hi = ((self.fetched_data & 0xFF00) >> 8) as u8;
-        let lo = (self.fetched_data & 0x00FF) as u8;
-
+        Emulator::cycles(1);
         self.stack_push(hi);
+
+        let lo = (self.fetched_data & 0x00FF) as u8;
         Emulator::cycles(1);
         self.stack_push(lo);
-        Emulator::cycles(1);
 
         Emulator::cycles(1);
     }
@@ -508,7 +518,6 @@ impl CPU {
         let reg_val = self.read_cb_reg(reg);
 
         Emulator::cycles(1);
-
 
         if *reg == RegType::RT_HL {
             Emulator::cycles(2);
@@ -808,6 +817,7 @@ impl CPU {
     /**
      * Increments the program counter
      */
+    #[inline(always)]
     fn increment_pc(&mut self) -> () {
         self.registers.pc += 1;
     }
@@ -1077,15 +1087,16 @@ impl CPU {
                     let mut pc = self.read_reg(&RegType::RT_PC);
                     // Lower byte
                     let lo = bus_read(pc);
-                    self.increment_pc();
                     Emulator::cycles(1);
+                    self.increment_pc();
 
                     // Upper byte
                     pc = self.read_reg(&RegType::RT_PC);
                     let hi = bus_read(pc);
+                    Emulator::cycles(1);
                     self.increment_pc();
                     self.fetched_data = ((hi as u16) << 8) | (lo as u16);
-                    Emulator::cycles(1);
+
                     return;
                 },
                 AddrMode::AM_MR_R => {
@@ -1142,7 +1153,7 @@ impl CPU {
                     self.mem_dest = hl_val;
                     self.dest_is_mem = true;
                     // Sets the value of HL to HL + 1
-                    self.set_register(&RegType::RT_HL, hl_val + 1);
+                    self.set_register(&RegType::RT_HL, hl_val.wrapping_add(1));
                 },
                 AddrMode::AM_HLD_R => {
                     // Store value from register into the memory location
@@ -1217,7 +1228,7 @@ impl CPU {
                     // specified by register
                     let pc = self.read_reg(&RegType::RT_PC);
                     self.fetched_data = bus_read(pc) as u16;
-                    
+                    Emulator::cycles(1);
                     self.increment_pc();
 
                     self.mem_dest = self.read_reg(&(*self.instr).reg1);
@@ -1250,11 +1261,6 @@ impl CPU {
                     self.fetched_data = bus_read(addr) as u16;
                     Emulator::cycles(1);
                     return;
-                },
-                _ => {
-                    log::error!(target: "stdout", "Address mode {:?} not implemented",
-                        (*self.instr).addr_mode);
-                    std::process::exit(-1);
                 }
             }
         }

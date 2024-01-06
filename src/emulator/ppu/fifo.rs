@@ -10,6 +10,7 @@ use std::collections::LinkedList;
  * Enum representation of different states
  * of fetching pixels
  */
+#[allow(non_camel_case_types)]
 #[derive(Copy, Clone, Debug)]
 pub enum FetchState {
     FS_TILE,
@@ -88,7 +89,8 @@ impl PixelFifo {
     }
 
     /**
-     * Resets some of the internal fields of the FIFO
+     * Resets some of the internal fields of the FIFO.
+     * Note that this function does not clear the FIFO queue.
      */
     pub fn reset(&mut self) -> () {
         self.curr_state = FetchState::FS_TILE;

@@ -47,6 +47,8 @@ pub struct LCD {
     pub sp2_colors: [u32; 4],
 }
 
+
+#[allow(non_camel_case_types)]
 #[derive(Copy, Clone, Debug)]
 pub enum LCD_MODE {
     MODE_HBLANK = 0,
@@ -162,7 +164,7 @@ impl LCD {
     }
 
     fn update_palette(&mut self, palette_data: u8, palette: u8) -> () {
-        let colors: &mut [u32; 4];
+        let colors: *mut [u32; 4];
         match palette {
             0 => {
                 colors = &mut self.bg_colors;
@@ -178,11 +180,12 @@ impl LCD {
                 std::process::exit(1);
             }
         }
-
-        colors[0] = DEFAULT_COLORS[(palette_data & 0b11) as usize];
-        colors[1] = DEFAULT_COLORS[((palette_data >> 2) & 0b11) as usize];
-        colors[2] = DEFAULT_COLORS[((palette_data >> 4) & 0b11) as usize];
-        colors[3] = DEFAULT_COLORS[((palette_data >> 6) & 0b11) as usize];
+        unsafe {
+            (*colors)[0] = DEFAULT_COLORS[(palette_data & 0b11) as usize];
+            (*colors)[1] = DEFAULT_COLORS[((palette_data >> 2) & 0b11) as usize];
+            (*colors)[2] = DEFAULT_COLORS[((palette_data >> 4) & 0b11) as usize];
+            (*colors)[3] = DEFAULT_COLORS[((palette_data >> 6) & 0b11) as usize];
+        }
     }
 
     pub fn write(&mut self, addr: u16, value: u8) -> () {

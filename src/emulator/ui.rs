@@ -32,15 +32,22 @@ const KEY_DOWN: i32 = SDLK_DOWN as i32;
 const KEY_LEFT: i32 = SDLK_LEFT as i32;
 const KEY_RIGHT: i32 = SDLK_RIGHT as i32;
 
-
+#[allow(non_upper_case_globals)]
 static mut main_window: *mut SDL_Window = std::ptr::null_mut();
+#[allow(non_upper_case_globals)]
 static mut main_renderer: *mut SDL_Renderer = std::ptr::null_mut();
+#[allow(non_upper_case_globals)]
 static mut main_texture: *mut SDL_Texture = std::ptr::null_mut();
+#[allow(non_upper_case_globals)]
 static mut main_screen: *mut SDL_Surface = std::ptr::null_mut();
 
+#[allow(non_upper_case_globals)]
 static mut debug_window: *mut SDL_Window = std::ptr::null_mut();
+#[allow(non_upper_case_globals)]
 static mut debug_renderer: *mut SDL_Renderer = std::ptr::null_mut();
+#[allow(non_upper_case_globals)]
 static mut debug_texture: *mut SDL_Texture = std::ptr::null_mut();
+#[allow(non_upper_case_globals)]
 static mut debug_screen: *mut SDL_Surface = std::ptr::null_mut();
 
 
@@ -233,7 +240,7 @@ pub fn run() -> () {
         type_: 0,
     };
     
-    'running: loop {
+    loop {
         // Event handling
         unsafe {
             while SDL_PollEvent(&mut event) > 0 {

@@ -1,9 +1,5 @@
-use std::ptr;
-
-use std::sync::{Arc, Mutex};
-use crate::emulator::ram::{RAM_CTX, RAM};
+use crate::emulator::ram::RAM_CTX;
 use crate::emulator::io::{io_read, io_write};
-use crate::emulator::timer::TIMER_CTX;
 use crate::emulator::cpu::CPU_CTX;
 use crate::emulator::ppu::PPU_CTX;
 use crate::emulator::dma::DMA_CTX;

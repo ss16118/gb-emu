@@ -11,7 +11,7 @@ pub mod fifo;
 use fifo::*;
 
 // Bit masks for accessing the OAM flags
-const PRIORITY_MASK: u8      = 0x80;
+const PRIORITY_MASK: u8     = 0x80;
 const Y_FLIP_MASK: u8       = 0x40;
 const X_FLIP_MASK: u8       = 0x20;
 const DMG_PALETTE_MASK: u8  = 0x10;
@@ -206,13 +206,14 @@ impl PPU {
                 bit = offset;
             }
             let hi = 
-                ((self.pixel_fifo.fetch_entry_data[(i * 2) as usize] & (1 << bit)) != 0) as u8;
+                ((self.pixel_fifo.fetch_entry_data[(i as i32 * 2) as usize] & (1 << bit)) != 0) as u8;
             let lo =
-                (((self.pixel_fifo.fetch_entry_data[((i * 2) + 1) as usize] & (1 << bit)) != 0) as u8) << 1;
+                (((self.pixel_fifo.fetch_entry_data[((i as i32 * 2) + 1) as usize] & (1 << bit)) != 0) as u8) << 1;
 
             let bg_priority = fetched_entry.get_flag(PRIORITY_MASK) != 0;
 
             let val = hi | lo;
+            // println!("[DEBUG] ly: {}, i: {}, val: {}, bg_priority: {}, bg_color: {}", ly, i, val, bg_priority as u8, bg_color);
             if val == 0 {
                 // Transparent pixel
                 continue;
@@ -323,8 +324,9 @@ impl PPU {
                 tile_index &= !1;
             }
             let addr = (0x8000 + (tile_index as u16 * 16) as u32 + tile_y as u32) + offset as u32;
+            let index = ((i as i32) * 2 + offset as i32) as usize;
             // println!("[DEBUG] tile: {}, tile_y: {}, LY: {}, addr: {:04X}", tile_index, tile_y, unsafe { LCD_CTX.ly }, addr);
-            self.pixel_fifo.fetch_entry_data[((i as i32) * 2 + offset as i32) as usize] =  bus_read(addr as u16);
+            self.pixel_fifo.fetch_entry_data[index] =  bus_read(addr as u16);
         }
     }
 
@@ -336,14 +338,14 @@ impl PPU {
             return;
         }
 
-        let win_y = unsafe { LCD_CTX.win_y };
-        let win_x = unsafe { LCD_CTX.win_x };
-        let fetch_x =  self.pixel_fifo.fetch_x;
-        let ly =  unsafe { LCD_CTX.ly };
+        let win_y: u16 = unsafe { LCD_CTX.win_y } as u16;
+        let win_x: u16 = unsafe { LCD_CTX.win_x } as u16;
+        let fetch_x: u16 =  self.pixel_fifo.fetch_x as u16;
+        let ly =  unsafe { LCD_CTX.ly } as u16;
         let map_area = unsafe { LCD_CTX.get_lcdc_win_tile_map_area() };
-        if fetch_x.wrapping_add(7) > win_x &&
-            fetch_x.wrapping_add(7) < win_x.wrapping_add(Y_RES).wrapping_add(14) {
-            if ly >= win_y && ly < win_y.wrapping_add(X_RES) {
+        if fetch_x.wrapping_add(7) >= win_x &&
+            fetch_x.wrapping_add(7) < win_x.wrapping_add(Y_RES as u16).wrapping_add(14) {
+            if ly >= win_y && ly < win_y.wrapping_add(X_RES as u16) {
                 let w_tile_y = self.window_line / 8;
                 let addr = map_area + (((fetch_x + 7 - win_x) as u16) / 8) +
                     (w_tile_y as u16 * 32);
@@ -371,16 +373,16 @@ impl PPU {
                 // Checks if the background window display is enabled
                 if unsafe { LCD_CTX.get_lcdc_flag(BGW_ENABLE_MASK) } {
                     let map_area = unsafe { LCD_CTX.get_lcdc_bg_tile_map_area() };
-                    let addr = map_area + 
-                        (self.pixel_fifo.map_x / 8) as u16 + 
-                        ((self.pixel_fifo.map_y / 8) as u16 * 32);
-                    let data = bus_read(addr);
+                    let addr: u32 = map_area as u32 + 
+                        (self.pixel_fifo.map_x as u32 / 8) + 
+                        ((self.pixel_fifo.map_y as u32 / 8) * 32);
+                    let data = bus_read(addr as u16);
                     self.pixel_fifo.bgw_fetch_data[0] = data;
                     if unsafe { LCD_CTX.get_lcdc_bg_tile_data_area() } == 0x8800 {
                         self.pixel_fifo.bgw_fetch_data[0] = 
                             self.pixel_fifo.bgw_fetch_data[0].wrapping_add(128);
                     }
-
+                    // println!("[DEBUG] ly: {}, addr: {:04X}, data: {}", unsafe { LCD_CTX.ly }, addr as u16, self.pixel_fifo.bgw_fetch_data[0]);
                     self.pipeline_load_window_tile();
                 }
                 // If sprites are enabled and there are sprites on the current line
@@ -395,11 +397,13 @@ impl PPU {
             },
             FetchState::FS_TILE_DATA_LOW => {
                 let data_area = unsafe { LCD_CTX.get_lcdc_bg_tile_data_area() };
-                let addr = data_area +
-                    (self.pixel_fifo.bgw_fetch_data[0] as u16 * 16) +
-                    (self.pixel_fifo.tile_y as u16);
-                let data = bus_read(addr);
+                let addr: u32 = data_area as u32 +
+                    (self.pixel_fifo.bgw_fetch_data[0] as u32 * 16) +
+                    (self.pixel_fifo.tile_y as u32);
+                let data = bus_read(addr as u16);
                 self.pixel_fifo.bgw_fetch_data[1] = data;
+
+                println!("[DEBUG] ly: {}, fetch_data[0]: {}, tile_y: {}, addr: {:04X}", unsafe { LCD_CTX.ly }, self.pixel_fifo.bgw_fetch_data[0], self.pixel_fifo.tile_y, addr);
 
                 self.pipeline_load_sprite_data(0);
 
@@ -497,7 +501,7 @@ impl PPU {
                 self.window_line = self.window_line.wrapping_add(1);
 
             }
-            LCD_CTX.ly = LCD_CTX.ly.wrapping_add(1); 
+            LCD_CTX.ly = LCD_CTX.ly.wrapping_add(1);
             if LCD_CTX.ly == LCD_CTX.lyc {
                 LCD_CTX.set_lcds_lyc(true);
                 if LCD_CTX.get_lcds_flag(LYC_INT_MASK) {

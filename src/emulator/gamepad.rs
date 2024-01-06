@@ -116,6 +116,7 @@ impl GamePad {
         return output;
     }
 
+    #[allow(dead_code)]
     pub fn get_state(&self) -> &GamePadState {
         return &self.controller;
     }

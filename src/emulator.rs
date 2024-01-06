@@ -56,7 +56,6 @@ fn cpu_run(debug: bool) -> () {
             if debug {
                 CPU_CTX.print_state("trace_file");
             }
-            Emulator::cycles(1);
         }
     }
 }

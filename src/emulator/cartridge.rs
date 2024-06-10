@@ -1,4 +1,6 @@
 use phf::{phf_map, Map};
+use std::io::{BufWriter, Write, BufReader, Read};
+extern crate libc;
 
 // https://gbdev.io/pandocs/The_Cartridge_Header.html
 // A struct that defines the cartridge header
@@ -29,6 +31,27 @@ pub struct Cartridge {
     rom_size: usize,
     // Actual ROM data
     rom: Vec<u8>,
+
+    // MBC1 related data
+    ram_enabled: bool,
+    ram_banking: bool,
+
+    rom_bank_x: *mut u8,
+    banking_mode: u8,
+
+    rom_bank_value: u8,
+    ram_bank_value: u8,
+
+    // Current RAM bank
+    ram_bank: *mut u8,
+    // All RAM banks
+    ram_banks: [*mut u8; 16],
+
+    // For battery
+    // Has battery
+    has_battery: bool,
+    // Should save battery backup
+    need_save: bool,
 }
 
 pub static mut CARTRIDGE_CTX: Cartridge = Cartridge {
@@ -36,6 +59,16 @@ pub static mut CARTRIDGE_CTX: Cartridge = Cartridge {
     rom_header: std::ptr::null(),
     rom_size: 0,
     rom: Vec::new(),
+    ram_enabled: false,
+    ram_banking: false,
+    rom_bank_x: std::ptr::null_mut(),
+    banking_mode: 0,
+    rom_bank_value: 0,
+    ram_bank_value: 0,
+    ram_bank: std::ptr::null_mut(),
+    ram_banks: [std::ptr::null_mut(); 16],
+    has_battery: false,
+    need_save: false,
 };
 
 // A static lookup table that maps the cartridge type to a string
@@ -168,12 +201,91 @@ impl Cartridge {
         self.rom_header = unsafe {
             std::mem::transmute::<*const u8, *const RomHeader>(&self.rom[0x100])
         };
+        
+        self.has_battery = self.has_battery();
+        self.need_save = false;
+        // Initializes the memory banks
+        self.setup_banking();
+
+        if self.has_battery {
+            self.load_battery();
+        }
+
         // Verifies the ROM header checksum
         if !self.verify_checksum() {
             log::error!(target: "stdout", "Verify ROM header checksum: FAILED");
             std::process::exit(1);
         }
+
         log::info!(target: "stdout", "Loading ROM file: SUCCESS");
+    }
+
+    /**
+     * Loads the battery file
+     */
+    pub fn load_battery(&mut self) -> () {
+        unsafe {
+            // Casts the title from a u8 array to a string
+            let title = std::str::from_utf8_unchecked(&(*self.rom_header).title);
+            // Removes the trailing NULL characters
+            let title = title.trim_end_matches(char::from(0));
+            let filename = format!("{}.sav", title);
+            log::info!("Loading battery file: {}", filename);
+            // Opens the battery file if it exists
+            if !std::path::Path::new(&filename).exists() {
+                log::warn!("Battery file not found: {}", filename);
+                return;
+            }
+            let file = std::fs::File::open(filename).expect("Unable to open battery file");
+            let mut reader = BufReader::new(&file);
+            // Reads the first 0x2000 bytes of the RAM from the battery file
+            reader.read_exact(std::slice::from_raw_parts_mut(self.ram_banks[0], 0x2000))
+                .expect("Unable to read from battery file");
+            log::info!("Loading battery file {}: SUCCESS", title);
+        }
+    }
+
+    /**
+     * Saves the battery file of the current game
+     */
+    pub fn save_battery(&self) -> () {
+        unsafe {
+            // Casts the title from a u8 array to a string
+            let title = std::str::from_utf8_unchecked(&(*self.rom_header).title);
+            // Removes the trailing NULL characters
+            let title = title.trim_end_matches(char::from(0));
+
+            let filename = format!("{}.sav", title);
+            log::info!("Saving battery file: {}", filename);
+            
+            let file = std::fs::File::create(filename).expect("Unable to create battery file");
+            let mut writer = BufWriter::new(&file);
+            // Writes the first 0x2000 bytes of the RAM to the battery file
+            writer.write_all(std::slice::from_raw_parts(self.ram_banks[0], 0x2000))
+                .expect("Unable to write to battery file");
+            log::info!("Saving battery file {}: SUCCESS", title);
+        }
+    }
+    
+
+    /**
+     * Initializes the memory banks when the cartridge is loaded
+     */
+    fn setup_banking(&mut self) -> () {
+        for i in 0..16 {
+            unsafe {
+                if ((*self.rom_header).ram_size == 0x02 && i == 0) ||
+                    ((*self.rom_header).ram_size == 0x03 && i < 4) || 
+                    ((*self.rom_header).ram_size == 0x04 && i < 16) ||
+                    ((*self.rom_header).ram_size == 0x05 && i < 8) {
+                    self.ram_banks[i] = libc::malloc(0x2000) as *mut u8;
+                    libc::memset(self.ram_banks[i] as *mut libc::c_void, 0, 0x2000);
+                }
+            }
+        }
+        self.ram_bank = self.ram_banks[0];
+        // Sets the ROM bank to the address of the ROM data starting at 0x4000
+        self.rom_bank_x = &mut self.rom[0x4000];
     }
 
     /**
@@ -200,17 +312,141 @@ impl Cartridge {
      * Reads a byte from the ROM
      */
     pub fn read(&self, address: u16) -> u8 {
-        // FIXME add support for RAM
-        return self.rom[address as usize];
+        if !self.mbc1() || address < 0x4000 {
+            return self.rom[address as usize];
+        }
+
+        // Reads from the RAM
+        if (address & 0xE000) == 0xA000 {
+            if !self.ram_enabled {
+                log::warn!("RAM is not enabled");
+                return 0xFF;
+            }
+
+            if self.ram_bank == std::ptr::null_mut() {
+                log::warn!("RAM bank is not set");
+                return 0xFF;
+            }
+
+            return unsafe {
+                *self.ram_bank.offset((address - 0xA000) as isize)
+            };
+        }
+        return unsafe {
+            *self.rom_bank_x.offset((address - 0x4000) as isize)
+        };
     }
 
     /**
      * Writes a byte to the ROM. Returns true if the write was successful,
      * false otherwise.
      */
-    pub fn write(&mut self, address: u16, data: u8) -> () {
-        // self.rom[address as usize] = data;
+    pub fn write(&mut self, address: u16, mut data: u8) -> () {
+        if !self.mbc1() {
+            log::error!("Writing to address 0x{:04X} not supported", address);
+            return;
+        }
+
+        if address < 0x2000 {
+            self.ram_enabled = (data & 0x0F) == 0x0A;
+            return;
+        }
+
+        if (address & 0xE000) == 0x2000 {
+            // ROM bank number
+            if data == 0 {
+                data = 1;
+            }
+            
+            data &= 0b11111;
+            self.rom_bank_value = data;
+            self.rom_bank_x = &mut self.rom[(data as usize) * 0x4000];
+        }
+
+        if (address & 0xE000) == 0x4000 {
+            // RAM bank number or upper bits of ROM bank number
+            self.ram_bank_value = data & 0b11;
+            if self.ram_banking {
+                // If RAM banking is enabled
+                if self.need_save() {
+                    self.save_battery();
+                }
+                self.ram_bank = self.ram_banks[self.ram_bank_value as usize];
+            } else {
+                self.ram_bank = self.ram_banks[(self.ram_bank_value & 0b11) as usize];
+            }
+        }
+
+        if (address & 0xE000) == 0x6000 {
+            // Banking mode selection
+            self.banking_mode = data & 1;
+            self.ram_banking = self.banking_mode > 0;
+
+            if self.ram_banking {
+                self.ram_bank = self.ram_banks[self.ram_bank_value as usize];
+            }
+        }
+
+        if (address & 0xE000) == 0xA000 {
+            if !self.ram_enabled {
+                log::warn!("RAM is not enabled");
+                return;
+            }
+
+            if self.ram_bank == std::ptr::null_mut() {
+                log::warn!("RAM bank is not set");
+                return;
+            }
+
+            unsafe {
+                *self.ram_bank.offset((address - 0xA000) as isize) = data;
+            }
+        }
+
+        // if needs to save
+        if self.has_battery {
+            self.need_save = true;
+        }
     }
+
+    /**
+     * Returns whether the cartridge needs to be saved or not.
+     */
+    pub fn need_save(&self) -> bool {
+        return self.need_save;
+    }
+
+
+    /**
+     * Returns whether the cartridge has a memory bank controller or not.
+     */
+    pub fn mbc1(&self) -> bool {
+        unsafe {
+            return (*self.rom_header).cartridge_type == 0x01 ||
+                (*self.rom_header).cartridge_type == 0x02 ||
+                (*self.rom_header).cartridge_type == 0x03;
+        }
+    }
+
+    /**
+     * Returns whether the cartridge has a battery or not.
+     */
+    pub fn has_battery(&self) -> bool {
+        unsafe {
+            return (*self.rom_header).cartridge_type == 0x03 ||
+                (*self.rom_header).cartridge_type == 0x06 ||
+                (*self.rom_header).cartridge_type == 0x09 ||
+                (*self.rom_header).cartridge_type == 0x0D ||
+                (*self.rom_header).cartridge_type == 0x0F ||
+                (*self.rom_header).cartridge_type == 0x10 ||
+                (*self.rom_header).cartridge_type == 0x13 ||
+                (*self.rom_header).cartridge_type == 0x17 ||
+                (*self.rom_header).cartridge_type == 0x1B ||
+                (*self.rom_header).cartridge_type == 0x1E;
+        }
+    }
+
+
 
     /**
      * Prints the cartridge information to the log file and/or stdout.

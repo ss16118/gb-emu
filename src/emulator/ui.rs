@@ -10,8 +10,8 @@ use crate::emulator::ppu::*;
 use crate::emulator::gamepad::*;
 
 const SCALE: i32 = 4;
-const WIDTH: i32 = 1024;
-const HEIGHT: i32 = 768;
+const WIDTH: i32 = X_RES as i32 * SCALE;
+const HEIGHT: i32 = Y_RES as i32 * SCALE;
 const FREQ: u32 = 60;
 
 const TILE_COLORS: [u32; 4] = [

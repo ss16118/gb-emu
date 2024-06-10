@@ -5,6 +5,7 @@ use once_cell::sync::Lazy;
 use crate::emulator::cpu::interrupts::*;
 use crate::emulator::ui;
 use crate::emulator::address_bus::*;
+use crate::emulator::cartridge::CARTRIDGE_CTX;
 use super::{lcd::*, cpu::interrupts::request_interrupt};
 
 pub mod fifo;
@@ -221,6 +222,7 @@ impl PPU {
 
             if !bg_priority || bg_color == 0 {
                 let palette = fetched_entry.get_flag(DMG_PALETTE_MASK) != 0;
+                // println!("[DEBUG] ly: {}, palette: {}", unsafe { LCD_CTX.ly }, palette as u8);
                 if palette {
                     color = unsafe { LCD_CTX.sp2_colors[val as usize] };
                 } else {
@@ -266,7 +268,7 @@ impl PPU {
             if unsafe { LCD_CTX.get_lcdc_flag(OBJ_ENABLE_MASK) } {
                 color = self.fetch_sprite_pixels(bit, color, hi | lo);
             }
-
+            // println!("[DEBUG] ly: {}, color: {:08X}", unsafe { LCD_CTX.ly }, color);
             if x >= 0 {
                 self.pixel_fifo.push(color);
                 self.pixel_fifo.fifo_x = self.pixel_fifo.fifo_x.wrapping_add(1);
@@ -325,7 +327,6 @@ impl PPU {
             }
             let addr = (0x8000 + (tile_index as u16 * 16) as u32 + tile_y as u32) + offset as u32;
             let index = ((i as i32) * 2 + offset as i32) as usize;
-            // println!("[DEBUG] tile: {}, tile_y: {}, LY: {}, addr: {:04X}", tile_index, tile_y, unsafe { LCD_CTX.ly }, addr);
             self.pixel_fifo.fetch_entry_data[index] =  bus_read(addr as u16);
         }
     }
@@ -403,8 +404,6 @@ impl PPU {
                 let data = bus_read(addr as u16);
                 self.pixel_fifo.bgw_fetch_data[1] = data;
 
-                println!("[DEBUG] ly: {}, fetch_data[0]: {}, tile_y: {}, addr: {:04X}", unsafe { LCD_CTX.ly }, self.pixel_fifo.bgw_fetch_data[0], self.pixel_fifo.tile_y, addr);
-
                 self.pipeline_load_sprite_data(0);
 
                 // Sets the next fetch state
@@ -412,12 +411,11 @@ impl PPU {
             },
             FetchState::FS_TILE_DATA_HIGH => {
                 let data_area = unsafe { LCD_CTX.get_lcdc_bg_tile_data_area() };
-                let addr = data_area +
-                    (self.pixel_fifo.bgw_fetch_data[0] as u16 * 16) +
-                    (self.pixel_fifo.tile_y as u16 + 1);
-                let data = bus_read(addr);
+                let addr = data_area as u32 +
+                    (self.pixel_fifo.bgw_fetch_data[0] as u32 * 16) +
+                    (self.pixel_fifo.tile_y as u32 + 1);
+                let data = bus_read(addr as u16);
                 self.pixel_fifo.bgw_fetch_data[2] = data;
-
                 self.pipeline_load_sprite_data(1);
 
                 // Sets the next fetch state
@@ -549,6 +547,11 @@ impl PPU {
                     unsafe { 
                         frame_counter = 0;
                         start_timer = curr_time;
+                    }
+                    unsafe {
+                        if CARTRIDGE_CTX.need_save() {
+                            CARTRIDGE_CTX.save_battery();
+                        }
                     }
                 }
                 unsafe {

@@ -8,6 +8,8 @@ use crate::emulator::lcd::*;
 use crate::emulator::gamepad::*;
 static mut serial_data: [u8; 2] = [0, 0];
 
+static mut read_sound_warning: bool = false;
+static mut write_sound_warning: bool = false;
 
 /**
  * Reads a byte from the given address from the I/O registers
@@ -31,7 +33,12 @@ pub fn io_read(address: u16) -> u8 {
     if LCD_START_ADDR <= address && address <= LCD_END_ADDR {
         return unsafe { LCD_CTX.read(address) };
     }
-    log::error!("Reading from I/O address 0x{:04X} currently not supported", address);
+
+    if 0xFF10 <= address && address <= 0xFF3F && !unsafe { read_sound_warning } {
+        log::warn!("Reading from sound registers not supported");
+        unsafe { read_sound_warning = true };
+        return 0;
+    }
     return 0;
 }
 
@@ -65,5 +72,9 @@ pub fn io_write(address: u16, data: u8) -> () {
         unsafe { LCD_CTX.write(address, data) };
         return;
     }
-    log::error!("Writing to I/O address 0x{:04X} currently not supported", address);
+    if 0xFF10 <= address && address <= 0xFF3F && !unsafe { write_sound_warning } {
+        log::warn!("Writing to sound registers not supported");
+        unsafe { write_sound_warning = true };
+        return;
+    }
 }

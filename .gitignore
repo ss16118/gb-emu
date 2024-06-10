@@ -1,3 +1,6 @@
 .DS_Store
 /target
 roms
+*.sav
+*.log
+*.out

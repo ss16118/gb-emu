@@ -251,12 +251,12 @@ impl PPU {
         // The FIFO is not full
         // Adds a new entry to the FIFO
         let x: i32 = self.pixel_fifo.fetch_x as i32 -
-            (8 - unsafe { LCD_CTX.scroll_x } % 8) as i32;
+            (8 - (unsafe { LCD_CTX.scroll_x } % 8)) as i32;
         
         for i in 0..8 {
             let bit: i32 = (7 - i) as i32;
-            let hi = ((self.pixel_fifo.bgw_fetch_data[1] & (1 << bit) != 0) as u8) << 1;
-            let lo = (self.pixel_fifo.bgw_fetch_data[2] & (1 << bit) != 0) as u8;
+            let hi = (self.pixel_fifo.bgw_fetch_data[1] & (1 << bit) != 0) as u8;
+            let lo = ((self.pixel_fifo.bgw_fetch_data[2] & (1 << bit) != 0) as u8) << 1;
             let mut color = unsafe { LCD_CTX.bg_colors[(hi | lo) as usize] };
 
             // Checks if the background window display is enabled

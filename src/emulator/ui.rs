@@ -18,7 +18,7 @@ const TILE_COLORS: [u32; 4] = [
     0xFFFFFFFF, // White
     0xFFAAAAAA, // Light gray
     0xFF555555, // Dark gray
-    0xFF000000 // Black
+    0xFF000000  // Black
 ];
 
 // Jesus christ rust is a pain when
@@ -102,8 +102,8 @@ pub fn display_tile(surface: *mut SDL_Surface, start_loc: u16, tile_num: u16, x:
         let b1 = bus_read(start_loc + (tile_num * 16) + tile_y);
         let b2 = bus_read(start_loc + (tile_num * 16) + tile_y + 1);
         for bit in (0..8).rev() {
-            let hi = (((b1 & (1 << bit)) > 0) as i8) << 1;
-            let lo = ((b2 & (1 << bit)) > 0) as i8;
+            let hi = (((b1 & (1 << bit)) > 0) as u8) << 1;
+            let lo = ((b2 & (1 << bit)) > 0) as u8;
             let color = hi | lo;
 
             rect.x = (x + ((7 - bit) * SCALE)) as i32;
@@ -144,7 +144,7 @@ fn update_debug_window() -> () {
         for x in 0..16 {
             display_tile(unsafe { debug_screen }, 
                 addr, tile_num,
-                x_draw + (x & SCALE), y_draw + (y * SCALE));
+                x_draw + (x * SCALE), y_draw + (y * SCALE));
             x_draw += 8 * SCALE;
             tile_num += 1;
         }
@@ -191,6 +191,8 @@ fn update_main_window() -> () {
         SDL_RenderCopy(main_renderer, main_texture, std::ptr::null(), std::ptr::null());
         SDL_RenderPresent(main_renderer);
     }
+
+    update_debug_window();
 }
 
 
@@ -257,7 +259,6 @@ pub fn run() -> () {
             }
         }
         if prev_frame != unsafe { PPU_CTX.curr_frame } {
-            update_debug_window();
             update_main_window();
         }
         prev_frame = unsafe { PPU_CTX.curr_frame };
